@@ -17,6 +17,14 @@ module SensorFireC
 }
 implementation
 {
+  typedef enum {
+    TYPE_SERVER,
+    TYPE_ROUTING,
+    TYPE_SENSOR
+  } nodetype_t;
+  
+  nodetype_t nodetype;
+  
   event void Boot.booted()
   {
     // onde vamos por o que o mote faz
@@ -24,7 +32,12 @@ implementation
     /* qdo inicia vais ter diferentes
     comportamentos depedendo do tipo de
     mote */
-    dbg("Boot", "Application booted.\n");
+    char mess[] = {"Application booted.\n"};
+    dbg("Boot", mess);
+    
+    if (TOS_NODE_ID == 0)       nodetype = TYPE_SERVER;
+    else if (TOS_NODE_ID <= 99) nodetype = TYPE_ROUTING;
+    else                        nodetype = TYPE_SENSOR;
   }
 
   event void AMControl.startDone(error_t err) 

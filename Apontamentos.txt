@@ -1,0 +1,5 @@
+Arranque:
+ - Fazer broadcast do ID.
+ - Ficar a espera de IDs a receber.
+ - Escolher um peer de entre os IDs recebidos (aqueles que estãodentro do alcance do hardware de comunicação).
+   * Se for 
