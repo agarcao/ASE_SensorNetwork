@@ -6,7 +6,7 @@
  * @author andre_garcao@tecnico.ulisboa.pt
  **/
 
- #include "SensorFire.h"
+ #include "SensorFireLib.h"
 
 configuration SensorFireAppC
 {

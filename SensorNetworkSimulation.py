@@ -1,3 +1,4 @@
+'''
 from TOSSIM import *
 t = Tossim([])
 m = t.getNode(32);
@@ -5,8 +6,8 @@ m.bootAtTime(45654);
 import sys
 t.addChannel("Boot", sys.stdout);
 t.runNextEvent();
-
 '''
+
 from TOSSIM import *
 import sys
 
@@ -22,8 +23,6 @@ for line in lines:
     print " ", s[0], " ", s[1], " ", s[2];
     r.add(int(s[0]), int(s[1]), float(s[2]))
 
-t.addChannel("Boot", sys.stdout)
-
 # Aqui lemos o file e criamos o modelo de Noise nas comunicacoes via radio
 noise = open("MoteNoise.txt", "r")
 lines = noise.readlines()
@@ -31,10 +30,17 @@ for line in lines:
   str = line.strip()
   if (str != ""):
     val = int(str)
-    for i in range(1, 4):
-      t.getNode(i).addNoiseTraceReading(val)
+    t.getNode(0).addNoiseTraceReading(val)
+    t.getNode(100).addNoiseTraceReading(val)
 
-for i in range(1, 4):
-  print "Creating noise model for ",i;
-  t.getNode(i).createNoiseModel()
-'''
+t.getNode(0).createNoiseModel()
+t.getNode(100).createNoiseModel()
+
+t.addChannel("Boot", sys.stdout);
+t.addChannel("AMReceiverC", sys.stdout);
+t.addChannel("AMSendC", sys.stdout);
+t.addChannel("ActiveMessageC", sys.stdout);
+m1 = t.getNode(0);
+m2 = t.getNode(100);
+m1.bootAtTime(0);
+m2.bootAtTime(10);
