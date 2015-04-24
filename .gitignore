@@ -2,4 +2,5 @@ app.xml
 _TOSSIMmodule.so
 TOSSIM.py
 simbuild
+logFile.txt
 *.*~

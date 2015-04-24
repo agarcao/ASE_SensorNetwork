@@ -38,6 +38,7 @@ t.getNode(100).createNoiseModel()
 
 t.addChannel("Boot", sys.stdout);
 t.addChannel("AMReceiverC", sys.stdout);
+t.addChannel("Receive", sys.stdout);
 t.addChannel("AMSendC", sys.stdout);
 t.addChannel("ActiveMessageC", sys.stdout);
 m1 = t.getNode(0);

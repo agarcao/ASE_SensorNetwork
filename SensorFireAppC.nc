@@ -6,27 +6,42 @@
  * @author andre_garcao@tecnico.ulisboa.pt
  **/
 
- #include "SensorFireLib.h"
+#include <stdio.h>
+#include "Timer.h"
+#include "SensorFireLib.h"
 
 configuration SensorFireAppC
 {
 }
 implementation
 {
-  components SensorFireC, MainC;
+  components MainC;
+  components SensorFireC;
   components ActiveMessageC;
 
-  components new AMSenderC(AM_RADIO_COUNT_MSG);
-  components new AMReceiverC(AM_RADIO_COUNT_MSG); 
-  //components LogRead; 
-  //components LogWrite; 
+  // Mote comunication
+  components new AMSenderC(AM_RADIO_SENSOR_FIRE_MSG);
+  components new AMReceiverC(AM_RADIO_SENSOR_FIRE_MSG); 
+
+  // Sensor
+  components new DemoSensorC() as Sensor;
+
+  //Timer
+  components new TimerMilliC();
   
 
   SensorFireC.Boot -> MainC.Boot;
+  
+  
+  SensorFireC.AMSend -> AMSenderC;
+  SensorFireC.Packet -> AMSenderC;
+  SensorFireC.AMPacket -> AMSenderC;
+  SensorFireC.AMControl -> ActiveMessageC;
 
   SensorFireC.Receive -> AMReceiverC;
-  SensorFireC.AMSend -> AMSenderC;
-  SensorFireC.AMControl -> ActiveMessageC;
-  SensorFireC.Packet -> AMSenderC;
+
+  SensorFireC.Read -> Sensor;
+
+  SensorFireC.Timer -> TimerMilliC;
 }
 
