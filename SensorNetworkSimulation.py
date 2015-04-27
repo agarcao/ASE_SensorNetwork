@@ -32,9 +32,11 @@ for line in lines:
     val = int(str)
     t.getNode(0).addNoiseTraceReading(val)
     t.getNode(100).addNoiseTraceReading(val)
+    t.getNode(101).addNoiseTraceReading(val)
 
 t.getNode(0).createNoiseModel()
 t.getNode(100).createNoiseModel()
+t.getNode(101).createNoiseModel()
 
 t.addChannel("Boot", sys.stdout);
 t.addChannel("AMReceiverC", sys.stdout);
@@ -43,5 +45,7 @@ t.addChannel("AMSendC", sys.stdout);
 t.addChannel("ActiveMessageC", sys.stdout);
 m1 = t.getNode(0);
 m2 = t.getNode(100);
+m3 = t.getNode(101);
 m1.bootAtTime(0);
 m2.bootAtTime(10);
+m3.bootAtTime(15);
