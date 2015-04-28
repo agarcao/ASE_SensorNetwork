@@ -3,6 +3,7 @@
 
 typedef nx_struct SensorBroadCastMessage {
   nx_uint16_t nodeid;
+  nx_uint16_t msg_seq; // Para os routing nodes distinguirem as mensagens que já rotearam...
   nx_uint16_t temperature;
 } SensorBroadCastMessage;
 

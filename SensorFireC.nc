@@ -24,10 +24,16 @@ implementation
 {
   bool busyRadio = FALSE;
   message_t messageRadio;
+  
+  int msg_curr_seq = 0;
 
   SensorBroadCastMessage *msgSend, *msgReceive;
 
   nx_uint16_t currentTemperature;
+  
+  // Para o routing node evitar repetir pacotes
+  // TODO: devia ser uma lista/vector.
+  nx_uint32_t lastRouted;
 
   FILE *logFile;
 
@@ -41,6 +47,9 @@ implementation
     if(!TOS_NODE_ID){ // server node
       dbg("Boot", "(Boot) I'am a server node - %d\n", TOS_NODE_ID);
     } else if(TOS_NODE_ID >= 1 && TOS_NODE_ID <= 99){ // routing nodes
+      // Enquanto que os sensor nodes têm que sabercom quem é que falam,
+      //  os routing nodes podem simplesmente fazer sempre broadcast.
+      lastRouted = 0;
       dbg("Boot", "(Boot) I'am a routing node - %d\n", TOS_NODE_ID);
     } else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999){ // sensor nodes
       dbg("Boot", "(Boot) I'am a sensor node - %d\n", TOS_NODE_ID);      
@@ -65,13 +74,14 @@ implementation
       call AMControl.start();
     } else {
 
-      dbg("ActiveMessageC", "(AMControl.startDone) Inicialização Correta - Vamos mandar msg caso sejamos o sensor node\n");
+      dbg("ActiveMessageC", "(AMControl.startDone) Inicialização Correta\n");
       if(!TOS_NODE_ID){ // server node
         dbg("ActiveMessageC", "(AMControl.startDone) Server Node\n");
       } else if(TOS_NODE_ID >= 1 && TOS_NODE_ID <= 99){ // routing nodes
+        dbg("ActiveMessageC", "(AMControl.startDone) Inicalizamos o timer para o router #%d \n", TOS_NODE_ID);
       } else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999){ // sensor nodes
         // Inializamos o timer
-        dbg("ActiveMessageC", "(AMControl.startDone) Inicalizamos o timer para o nó #%d \n", TOS_NODE_ID);        
+        dbg("ActiveMessageC", "(AMControl.startDone) Inicalizamos o timer para o nó #%d \n", TOS_NODE_ID);
         call Timer.startPeriodic(DEFAULT_INTERVAL);        
       } 
     }
@@ -93,12 +103,13 @@ implementation
            void* payload, uint8_t len) 
   {
     dbg("AMReceiverC", "(Receive) Recebi msg\n");
+    msgReceive = (SensorBroadCastMessage*) payload;
+    
     if(!TOS_NODE_ID){ // server node
       dbg("AMReceiverC", "(Receive) Entrei no switch do root node (0)\n");
       if(len == sizeof(SensorBroadCastMessage)){ // Recebeu uma msg do sensor node
 
         // Temos a mensagem enviada para o root
-        msgReceive = (SensorBroadCastMessage*) payload;
         dbg("AMReceiverC", "(Receive) I'am the root(%d) and I receive a msg from sensor node #%d\n", TOS_NODE_ID, msgReceive->nodeid);               
 
         // escrita no log
@@ -112,19 +123,39 @@ implementation
 
         fclose(logFile);
       }
-    } else if(TOS_NODE_ID >= 1 && TOS_NODE_ID <= 99){ // routing nodes
-    } else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999){ // sensor nodes
-    } else {
+    }
+    else if(TOS_NODE_ID >= 1 && TOS_NODE_ID <= 99) // routing nodes
+    {
+      nx_uint32_t msgsign;
+      dbg("AMReceiverC", "(Receive) RouteNode received msg from sensor node #%d\n", msgReceive->nodeid);
+      msgsign = (msgReceive->nodeid&0xFFFF)<<16 | (msgReceive->msg_seq&0xFFFF);
+      if (msgsign == lastRouted) {
+        dbg("AMReceiverC", "(Receive) RouteNode discarding dup msg from sensor node #%d\n", msgReceive->nodeid);
+        return bufPtr;
+      }
+      else { lastRouted = msgsign; }
+      
+      // TODO: será que o routing node pode fazer broadcast, à luz do enunciado?...
+      if (call AMSend.send(AM_BROADCAST_ADDR, bufPtr, sizeof(SensorBroadCastMessage)) == SUCCESS) {
+          dbg("AMReceiverC", "(Receive) Dps do call ser um SUCCESS\n");
+          busyRadio = TRUE;
+      }
+      else { dbg("AMReceiverC", "(Receive) RouteNode failed to reroute packet from sensor node #%d\n", msgReceive->nodeid); }
+    }
+    else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999) { // sensor nodes
+    }
+    else {
     }
     return bufPtr;
   }
 
   // TIMER EVENTS
   event void Timer.fired() {
-    if(!busyRadio){
+    if(!busyRadio) {
         
         msgSend = (SensorBroadCastMessage*)(call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
         msgSend->nodeid = TOS_NODE_ID;
+        msgSend->msg_seq = ++msg_curr_seq; // Primeiro numero é 1, e não 0!
         msgSend->temperature = currentTemperature;
         
         dbg("ActiveMessageC", "(ActiveMessageC) Estou dentro do envio\n");

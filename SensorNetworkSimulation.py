@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 '''
 from TOSSIM import *
 t = Tossim([])
@@ -15,33 +18,55 @@ t = Tossim([])
 r = t.radio()
 f = open("input.txt", "r")
 
+# Lista de nos para bootar. Bute?!...
+toboot = set()
+
 # Aqui lemos o file e criamos as ligacoes entre motes
 lines = f.readlines()
 for line in lines:
   s = line.split()
   if (len(s) > 0):
     print " ", s[0], " ", s[1], " ", s[2];
-    r.add(int(s[0]), int(s[1]), float(s[2]))
+    fromnode = int(s[0])
+    tonode   = int(s[1])
+    r.add(fromnode, tonode, float(s[2]))
+    toboot.add(fromnode)
+    toboot.add(tonode)
 
 # Aqui lemos o file e criamos o modelo de Noise nas comunicacoes via radio
 noise = open("MoteNoise.txt", "r")
 lines = noise.readlines()
 for line in lines:
-  str = line.strip()
-  if (str != ""):
-    val = int(str)
-    t.getNode(0).addNoiseTraceReading(val)
-    t.getNode(100).addNoiseTraceReading(val)
+  noisestr = line.strip()
+  if (noisestr != ""):
+    val = int(noisestr)
+    for bute in toboot:
+      t.getNode(bute).addNoiseTraceReading(val)
 
-t.getNode(0).createNoiseModel()
-t.getNode(100).createNoiseModel()
+for bute in toboot:
+  t.getNode(bute).createNoiseModel()
 
 t.addChannel("Boot", sys.stdout);
 t.addChannel("AMReceiverC", sys.stdout);
 t.addChannel("Receive", sys.stdout);
 t.addChannel("AMSendC", sys.stdout);
 t.addChannel("ActiveMessageC", sys.stdout);
-m1 = t.getNode(0);
-m2 = t.getNode(100);
-m1.bootAtTime(0);
-m2.bootAtTime(10);
+
+def m(n): return t.getNode(n)
+
+# Bute agora bootar tudo o que é para ser bootado...
+for bute in toboot:
+  # Lembro-me de o prof ter dito algures que os motes não podiam dar boot todos
+  # ao mesmo tempo pk senão dá filósofos a comer esparguete...
+  # Portanto vamos aleatório...
+  butime = (bute*7+7) % 99
+  m(bute).bootAtTime(butime)
+  print ("Nó %4d inicia aos %5d" % (bute,butime))
+
+
+def do():
+  print("At t.time()=="+str(t.time())+" event returns: " + str(t.runNextEvent()) + "!")
+  #print "\n"
+def doto(millisecs):
+  while t.time() < millisecs:
+    do()
