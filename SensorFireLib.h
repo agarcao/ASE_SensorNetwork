@@ -8,6 +8,7 @@ typedef nx_struct SensorNodeDiscoveryMessage {
 } SensorNodeDiscoveryMessage;
 
 typedef nx_struct SensorNodeDiscoveryRspMessage {
+  nx_uint16_t sensorNodeId;
   nx_uint16_t dispatchNodeId;
 } SensorNodeDiscoveryRspMessage;
 

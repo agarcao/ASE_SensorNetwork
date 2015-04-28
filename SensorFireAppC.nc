@@ -32,6 +32,8 @@ implementation
 
   //Timer
   components new TimerMilliC();
+
+  components new QueueC(message_t, 20) as Queue;
   
 
   SensorFireC.Boot -> MainC.Boot;
@@ -47,6 +49,8 @@ implementation
   SensorFireC.Read -> Sensor;
 
   SensorFireC.Timer -> TimerMilliC;
+
+  SensorFireC.SendQueue -> Queue;
 
   //SensorFireC.LocalTime -> CounterToLocalTimeC;
 }
