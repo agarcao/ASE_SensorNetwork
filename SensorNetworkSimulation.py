@@ -1,4 +1,4 @@
-'''
+1'''
 from TOSSIM import *
 t = Tossim([])
 m = t.getNode(32);
@@ -52,4 +52,4 @@ m4 = t.getNode(102);
 m1.bootAtTime(0);
 m2.bootAtTime(10);
 m3.bootAtTime(15);
-m4.bootAtTime(15);
+m4.bootAtTime(20);

@@ -21,7 +21,7 @@ implementation
 
 
   // For Local Time
-  //components  new CounterToLocalTimeC(TMilli);
+  components LocalTimeMilliC; 
 
   // Mote comunication
   components new AMSenderC(AM_RADIO_SENSOR_FIRE_MSG);
@@ -52,6 +52,6 @@ implementation
 
   SensorFireC.SendQueue -> Queue;
 
-  //SensorFireC.LocalTime -> CounterToLocalTimeC;
+  SensorFireC.LocalTime -> LocalTimeMilliC;;
 }
 

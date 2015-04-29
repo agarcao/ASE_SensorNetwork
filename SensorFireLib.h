@@ -25,6 +25,11 @@ enum {
 
   // Intervalo entre envio-o de msg
   DEFAULT_INTERVAL = 256,
+
+  // Message Types
+  SENSOR_NODE_DISCOVERY_MESSAGE = 1,
+  SENSOR_NODE_DISCOVERY_RSP_MESSAGE = 2,
+  SENSOR_NODE_BROADCAST_MESSAGE = 3
 };
 
 #endif

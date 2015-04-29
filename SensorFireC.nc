@@ -21,7 +21,7 @@ module SensorFireC
 
     interface Queue<message_t> as SendQueue;
 
-    //interface LocalTime<TMilli>;
+    interface LocalTime<TMilli>;
   }
 }
 implementation
@@ -95,7 +95,7 @@ implementation
             msgDiscoverySend->latitude = TOS_NODE_ID;
             msgDiscoverySend->longitude = TOS_NODE_ID;
         
-            dbg("ActiveMessageC", "(AMControl.startDone) Enviou a mensage de discovery do sensor node #%d\n", TOS_NODE_ID);
+            dbg("ActiveMessageC", "(AMControl.startDone) Enviou a mensage de discovery do sensor node #%d %d\n", TOS_NODE_ID);
             if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorNodeDiscoveryMessage)) == SUCCESS) {
               dbg("ActiveMessageC", "(AMControl.startDone) Sucessor a enviar a msg discovery do sensor node #%d\n", TOS_NODE_ID);
               busyRadio = TRUE;
@@ -117,27 +117,60 @@ implementation
 
   event void AMSend.sendDone(message_t* bufPtr, error_t error) 
   {
-    // Precisamos de dizer q o message buffer pode ser reutilizado
-    dbg("AMReceiverC", "(AMSend.sendDone) Entro aqui %d\n", TOS_NODE_ID);
-    if (&messageRadio == bufPtr) {      
-      if(!(call SendQueue.empty())){
-        // se há mensagens na queue para enviar
-        dbg("AMReceiverC", "(AMSend.sendDone) [%d] Há mais msg para enviar\n", TOS_NODE_ID); 
-        messageRadio = call SendQueue.dequeue();
-        msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
-              (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryRspMessage)));
+    dbg("AMReceiverC", "(AMSend.sendDone) [%d] Entro aqui\n", TOS_NODE_ID);
+    if(!TOS_NODE_ID){ // server node
+      if (&messageRadio == bufPtr) {  // verifica se msg teve errors de transmissão
+        if(!(call SendQueue.empty())){
+          // se há mensagens na queue para enviar
+          dbg("AMReceiverC", "(AMSend.sendDone) [%d] Há mais msg para enviar\n", TOS_NODE_ID); 
+          messageRadio = call SendQueue.dequeue();
+          msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
+                (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryRspMessage)));
 
-        if (call AMSend.send(msgRespDiscoverySend->sensorNodeId, &messageRadio, sizeof(SensorNodeDiscoveryRspMessage)) == SUCCESS) {
+          if (call AMSend.send(msgRespDiscoverySend->sensorNodeId, &messageRadio, sizeof(SensorNodeDiscoveryRspMessage)) == SUCCESS) {
+          }
+        }
+        else{
+          // Se já n há
+          dbg("AMReceiverC", "(AMSend.sendDone) [%d] Queue está empty\n", TOS_NODE_ID);
+          busyRadio = FALSE;
+        }
+      }    
+    } else if(TOS_NODE_ID >= 1 && TOS_NODE_ID <= 99){ // routing nodes
+    } else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999){ // sensor nodes
+      if (&messageRadio == bufPtr) {  // verifica se msg teve errors de transmissão
+        dbg("AMReceiverC", "(AMSend.sendDone) [%d] Chego aqui :: sizeof bufPtr=%d :: sizeof Sensor..=%d\n", TOS_NODE_ID
+         ,sizeof(messageRadio), sizeof(SensorNodeDiscoveryMessage));
+        if (dispatchNodeID == -1){
+          dbg("AMReceiverC", "(AMSend.sendDone) [%d] Acabei de enviar uma msg de discovery\n", TOS_NODE_ID);
+
+          // Inicializamos timer para voltar a enviar msg de discovery enquanto n tivemos um dispatch node
+          dbg("AMReceiverC", "(AMSend.sendDone) [%d] Inicializo timer para mandar nova discovery msg ao fim de %d\n", TOS_NODE_ID, DEFAULT_INTERVAL);
+          busyRadio = FALSE;
+          call Timer.startPeriodic(DEFAULT_INTERVAL);
+        }        
+        else if(!(call SendQueue.empty())){
+          // se há mensagens na queue para enviar
+          dbg("AMReceiverC", "(AMSend.sendDone) [%d] Há mais msg para enviar\n", TOS_NODE_ID); 
+          messageRadio = call SendQueue.dequeue();
+          msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
+                (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryRspMessage)));
+
+          if (call AMSend.send(msgRespDiscoverySend->sensorNodeId, &messageRadio, sizeof(SensorNodeDiscoveryRspMessage)) == SUCCESS) {
+          }
+        }
+        else{
+          // Se já n há
+          dbg("AMReceiverC", "(AMSend.sendDone) [%d] Queue está empty\n", TOS_NODE_ID);
+          busyRadio = FALSE;
         }
       }
-      else{
-        // Se já n há
-        dbg("AMReceiverC", "(AMSend.sendDone) [%d] Queue está empty\n", TOS_NODE_ID);
-        busyRadio = FALSE;
-      }
+    } 
+    else {
     }
     dbg("AMReceiverC", "(AMSend.sendDone) ERROR %s\n", error);
   }
+
 
   event message_t* Receive.receive(message_t* bufPtr, 
            void* payload, uint8_t len) 
@@ -158,7 +191,8 @@ implementation
             dbg("AMReceiverC", "(Receive) Deu merda!");               
           }
 
-          fprintf(logFile, "Node with id #%d connected. Position is (%d, %d)\n", 
+          fprintf(logFile, "[%d] Node with id #%d connected. Position is (%d, %d)\n",
+            call LocalTime.get(), 
             msgDiscoveryReceive->nodeid, 
             msgDiscoveryReceive->latitude,
             msgDiscoveryReceive->longitude
@@ -206,7 +240,7 @@ implementation
           }
 
           fprintf(logFile, "[%d] Node with id #%d give temperature #%d and humity #%d\n", 
-            (int)msgBroadCastReceive->localTime,
+            call LocalTime.get(),
             (int)msgBroadCastReceive->nodeid, 
             (int)msgBroadCastReceive->temperature,
             (int)msgBroadCastReceive->humity
@@ -225,24 +259,22 @@ implementation
         // se for para mim
         dispatchNodeID = (int)msgDiscoveryRspReceive->dispatchNodeId;
 
-        // Chamar o timer para começar a manda msg periodicamente
-        dbg("ActiveMessageC", "(Receive) Inicalizamos o timer para o nó #%d \n", TOS_NODE_ID);        
-        call Timer.startPeriodic(DEFAULT_INTERVAL);           
+        // Timer já está a correr e portanto n precisamos de mais nda
       }
     } else {
     }
     return bufPtr;
   }
 
-  // TIMER EVENTS
+  // TIMER EVENTS (SÓ OS SENSOR NODES É QUE FAZEM ESTE EVENTO)
   event void Timer.fired() {
-    dbg("ActiveMessageC", "(Timer.fired) Timer desparou para o nó #%d\n", TOS_NODE_ID);
+    dbg("ActiveMessageC", "(Timer.fired) [%d] Timer desparou para o nó\n", TOS_NODE_ID);
     if(!busyRadio){
+      if(dispatchNodeID != -1){
+        // já encontramos o nó de dispatch para este sensor node
         
         msgBroadCastSend = (SensorBroadCastMessage*)
           (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
-
-        msgBroadCastSend->nodeid = TOS_NODE_ID;
         msgBroadCastSend->dispatchNodeId = dispatchNodeID;
         msgBroadCastSend->temperature = 0;
         msgBroadCastSend->humity = 0;
@@ -254,6 +286,25 @@ implementation
           busyRadio = TRUE;
         }
       }
+      else{
+        // ainda n encontramos o dispatch node por isso enviamos msg de discovery outra vez
+        msgDiscoverySend = (SensorNodeDiscoveryMessage*)
+              (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryMessage)));
+        msgDiscoverySend->nodeid = TOS_NODE_ID;
+        msgDiscoverySend->latitude = TOS_NODE_ID;
+        msgDiscoverySend->longitude = TOS_NODE_ID;
+        
+        dbg("ActiveMessageC", "(AMControl.startDone) Enviou a mensage de discovery do sensor node #%d\n", TOS_NODE_ID);
+        if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorNodeDiscoveryMessage)) == SUCCESS) {
+          dbg("ActiveMessageC", "(AMControl.startDone) Sucessor a enviar a msg discovery do sensor node #%d\n", TOS_NODE_ID);
+          busyRadio = TRUE;
+        }          
+      }
+    }
+    else{
+      //sensor node n devia aconter
+      dbg("ActiveMessageC", "(Timer.fired) [%d] Channel Busy. Não devia acontecer.\n", TOS_NODE_ID);
+    }
   }
 
 
