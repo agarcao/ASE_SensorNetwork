@@ -61,7 +61,7 @@ implementation
     }
 
     // Inicializa o modulo de comunicação
-    dbg("Boot", "(Boot) Initializa AMControl");      
+    dbg("Boot", "(Boot) Initializa AMControl\n");      
     call AMControl.start();
   }
 
@@ -127,20 +127,23 @@ implementation
     else if(TOS_NODE_ID >= 1 && TOS_NODE_ID <= 99) // routing nodes
     {
       nx_uint32_t msgsign;
-      dbg("AMReceiverC", "(Receive) RouteNode received msg from sensor node #%d\n", msgReceive->nodeid);
+      dbg("AMReceiverC", "(Receive) RouteNode received msg (#%d, seq=%d)\n", msgReceive->nodeid, msgReceive->msg_seq);
       msgsign = (msgReceive->nodeid&0xFFFF)<<16 | (msgReceive->msg_seq&0xFFFF);
       if (msgsign == lastRouted) {
-        dbg("AMReceiverC", "(Receive) RouteNode discarding dup msg from sensor node #%d\n", msgReceive->nodeid);
+        dbg("AMReceiverC", "(Receive) RouteNode discarding dup msg (#%d, seq=%d)\n", msgReceive->nodeid, msgReceive->msg_seq);
         return bufPtr;
       }
       else { lastRouted = msgsign; }
       
-      // TODO: será que o routing node pode fazer broadcast, à luz do enunciado?...
-      if (call AMSend.send(AM_BROADCAST_ADDR, bufPtr, sizeof(SensorBroadCastMessage)) == SUCCESS) {
-          dbg("AMReceiverC", "(Receive) Dps do call ser um SUCCESS\n");
-          busyRadio = TRUE;
-      }
-      else { dbg("AMReceiverC", "(Receive) RouteNode failed to reroute packet from sensor node #%d\n", msgReceive->nodeid); }
+      //if (!busyRadio) {
+        // TODO: Verificar se o módulo de rádio está ocupado...
+        dbg("AMReceiverC", "(Receive) RouteNode rerouting msg (#%d, seq=%d)\n", msgReceive->nodeid, msgReceive->msg_seq);
+        if (call AMSend.send(AM_BROADCAST_ADDR, bufPtr, sizeof(SensorBroadCastMessage)) == SUCCESS) {
+            dbg("AMReceiverC", "(Receive) Dps do call ser um SUCCESS\n");
+            busyRadio = TRUE;
+        }
+        else { dbg("AMReceiverC", "(Receive) RouteNode failed to reroute packet from sensor node #%d\n", msgReceive->nodeid); }
+      //} else Queue.queue();
     }
     else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999) { // sensor nodes
     }
