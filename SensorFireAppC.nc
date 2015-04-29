@@ -33,7 +33,7 @@ implementation
   //Timer
   components new TimerMilliC();
 
-  components new QueueC(message_t, 20) as Queue;
+  components new QueueC(struct SensorFireMsg, 20) as Queue;
   
 
   SensorFireC.Boot -> MainC.Boot;

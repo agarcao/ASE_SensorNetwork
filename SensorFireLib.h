@@ -2,9 +2,10 @@
 #define SENSOR_FIRE_LIB_H
 
 typedef nx_struct SensorNodeDiscoveryMessage {
-  nx_uint16_t nodeid;
+  nx_uint16_t sensorNodeId;
   nx_uint16_t latitude;
   nx_uint16_t longitude;
+  nx_uint16_t hop;
 } SensorNodeDiscoveryMessage;
 
 typedef nx_struct SensorNodeDiscoveryRspMessage {
@@ -13,12 +14,19 @@ typedef nx_struct SensorNodeDiscoveryRspMessage {
 } SensorNodeDiscoveryRspMessage;
 
 typedef nx_struct SensorBroadCastMessage {
-  nx_uint16_t nodeid;
-  nx_uint16_t dispatchNodeId;
+  nx_uint16_t sensorNodeId;
   nx_uint16_t temperature;
-  nx_uint16_t humity;
-  nx_uint32_t localTime;
+  nx_uint16_t humidity;
 } SensorBroadCastMessage;
+
+typedef struct SensorFireMsg {
+  short messageTypeId;
+  union{
+    SensorNodeDiscoveryMessage sensorNodeDiscoveryMessage;
+    SensorNodeDiscoveryRspMessage sensorNodeDiscoveryRspMessage;
+    SensorBroadCastMessage sensorBroadCastMessage;
+  } messageType;
+} SensorFireMsg;
 
 enum {
   AM_RADIO_SENSOR_FIRE_MSG = 6,

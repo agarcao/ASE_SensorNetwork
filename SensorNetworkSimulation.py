@@ -1,4 +1,4 @@
-1'''
+'''
 from TOSSIM import *
 t = Tossim([])
 m = t.getNode(32);
@@ -31,14 +31,12 @@ for line in lines:
   if (str != ""):
     val = int(str)
     t.getNode(0).addNoiseTraceReading(val)
+    t.getNode(20).addNoiseTraceReading(val)
     t.getNode(100).addNoiseTraceReading(val)
-    t.getNode(101).addNoiseTraceReading(val)
-    t.getNode(102).addNoiseTraceReading(val)
 
 t.getNode(0).createNoiseModel()
+t.getNode(20).createNoiseModel()
 t.getNode(100).createNoiseModel()
-t.getNode(101).createNoiseModel()
-t.getNode(102).createNoiseModel()
 
 t.addChannel("Boot", sys.stdout);
 t.addChannel("AMReceiverC", sys.stdout);
@@ -47,9 +45,7 @@ t.addChannel("AMSendC", sys.stdout);
 t.addChannel("ActiveMessageC", sys.stdout);
 m1 = t.getNode(0);
 m2 = t.getNode(100);
-m3 = t.getNode(101);
-m4 = t.getNode(102);
+m3 = t.getNode(20);
 m1.bootAtTime(0);
 m2.bootAtTime(10);
 m3.bootAtTime(15);
-m4.bootAtTime(20);
