@@ -2,6 +2,7 @@
 #define SENSOR_FIRE_LIB_H
 
 typedef nx_struct SensorNodeDiscoveryMessage {
+  nx_uint32_t seqNumb;
   nx_uint16_t sensorNodeId;
   nx_uint16_t latitude;
   nx_uint16_t longitude;
@@ -14,6 +15,7 @@ typedef nx_struct SensorNodeDiscoveryRspMessage {
 } SensorNodeDiscoveryRspMessage;
 
 typedef nx_struct SensorBroadCastMessage {
+  nx_uint32_t seqNumb;
   nx_uint16_t sensorNodeId;
   nx_uint16_t temperature;
   nx_uint16_t humidity;
@@ -28,6 +30,12 @@ typedef struct SensorFireMsg {
   } messageType;
 } SensorFireMsg;
 
+// Cache Item
+typedef nx_struct CacheItem {
+  nx_uint16_t nodeId;
+  nx_uint16_t seqNumb;
+} CacheItem;
+
 enum {
   AM_RADIO_SENSOR_FIRE_MSG = 6,
 
@@ -37,7 +45,10 @@ enum {
   // Message Types
   SENSOR_NODE_DISCOVERY_MESSAGE = 1,
   SENSOR_NODE_DISCOVERY_RSP_MESSAGE = 2,
-  SENSOR_NODE_BROADCAST_MESSAGE = 3
+  SENSOR_NODE_BROADCAST_MESSAGE = 3,
+
+  // CACHE SIZE
+  CACHE_SIZE = 10
 };
 
 #endif

@@ -21,11 +21,22 @@ module SensorFireC
 
     interface Queue<struct SensorFireMsg> as SendQueue;
 
-    interface LocalTime<TMilli>;
+    interface LocalTime<TMilli>;    
+  }
+  provides
+  {
+    interface Cache<CacheItem>;
   }
 }
 implementation
 {
+  // Variaveis da Cache
+  CacheItem cache[CACHE_SIZE];
+  uint8_t first = 0;
+  uint8_t count = 0;
+  CacheItem cacheItem;
+  int8_t cacheIndex;
+
   // Variavel c/ o dispatch node ID
   int dispatchNodeID = -1;
 
@@ -44,10 +55,20 @@ implementation
   // Apontador para estrutuca SensorFireMsg
   SensorFireMsg structSensorFire;
 
+  // Numero de sequencia das msg mandadas pelos sensor nodes
+  uint32_t seqNumb = 0;
 
-  nx_uint16_t currentTemperature;
+  // Boleano para dizer se routing nodes devem retrasmitir mensagens ou discartar
+  bool retransmit;
+  bool alreadyArrive;
+
+  uint16_t currentTemperature;
 
   FILE *logFile;
+
+  /* FUNCTIONS DECLARATIONS */
+  int8_t lookup(uint16_t nodeIdKey);
+
 
   event void Boot.booted()
   {
@@ -94,12 +115,13 @@ implementation
         
             msgDiscoverySend = (SensorNodeDiscoveryMessage*)
               (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryMessage)));
+            msgDiscoverySend->seqNumb = ++seqNumb;
             msgDiscoverySend->sensorNodeId = TOS_NODE_ID;
             msgDiscoverySend->latitude = TOS_NODE_ID;
             msgDiscoverySend->longitude = TOS_NODE_ID;
             msgDiscoverySend->hop = 0;
         
-            dbg("ActiveMessageC", "(AMControl.startDone) Enviou a mensage de discovery do sensor node #%d %d\n", TOS_NODE_ID);
+            dbg("ActiveMessageC", "(AMControl.startDone) Enviou a mensage de discovery do sensor node #%d\n", TOS_NODE_ID);
             if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorNodeDiscoveryMessage)) == SUCCESS) {
               dbg("ActiveMessageC", "(AMControl.startDone) Sucessor a enviar a msg discovery do sensor node #%d\n", TOS_NODE_ID);
               busyRadio = TRUE;
@@ -168,6 +190,7 @@ implementation
             msgDiscoverySend = (SensorNodeDiscoveryMessage*)
                   (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryMessage)));
             // construimos a msg
+            msgDiscoverySend->seqNumb = structSensorFire.messageType.sensorNodeDiscoveryMessage.seqNumb;
             msgDiscoverySend->sensorNodeId = structSensorFire.messageType.sensorNodeDiscoveryMessage.sensorNodeId;
             msgDiscoverySend->latitude = structSensorFire.messageType.sensorNodeDiscoveryMessage.latitude;
             msgDiscoverySend->longitude = structSensorFire.messageType.sensorNodeDiscoveryMessage.longitude;
@@ -194,6 +217,7 @@ implementation
             msgBroadCastSend = (SensorBroadCastMessage*)
                   (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
             // construimos a msg
+            msgBroadCastSend->seqNumb = structSensorFire.messageType.sensorBroadCastMessage.seqNumb;
             msgBroadCastSend->sensorNodeId = structSensorFire.messageType.sensorBroadCastMessage.sensorNodeId;
             msgBroadCastSend->temperature = structSensorFire.messageType.sensorBroadCastMessage.temperature;
             msgBroadCastSend->humidity = structSensorFire.messageType.sensorBroadCastMessage.humidity;
@@ -266,66 +290,117 @@ implementation
           TOS_NODE_ID, 
           msgDiscoveryReceive->sensorNodeId,
           msgDiscoveryReceive->hop
-        );               
-
-        // escrita no log
-        logFile = fopen("logFile.txt", "ab+");
-        if (logFile == NULL)        {
-          dbg("AMReceiverC", "(Receive) Deu merda!");               
-        }
-
-        dbg("AMReceiverC", "(Receive) vou printar no log '[%d] Node with id #%d connected. Position is (%d, %d)'\n", 
-          call LocalTime.get(), 
-          msgDiscoveryReceive->sensorNodeId, 
-          msgDiscoveryReceive->latitude,
-          msgDiscoveryReceive->longitude
         );
 
-        fprintf(logFile, "[%d] Node with id #%d connected. Position is (%d, %d)\n",
-          call LocalTime.get(), 
-          msgDiscoveryReceive->sensorNodeId, 
-          msgDiscoveryReceive->latitude,
-          msgDiscoveryReceive->longitude
-        );
+        // Temos de verificar se este msg já chegou ao root
+        alreadyArrive = FALSE;
+        cacheIndex = lookup(msgDiscoveryReceive->sensorNodeId);
 
-        fclose(logFile);
+        // Existe informações deste sensor node
+        if(cacheIndex != -1){
+          cacheItem = cache[cacheIndex];
+          dbg("AMReceiverC", "(Receive) [%d][Routing Node] Existe info sobre este nó #%d (seqNumb: %d)\n",
+            TOS_NODE_ID,
+            cacheItem.nodeId,
+            cacheItem.seqNumb
+          );
 
-        // só retrasmitimos se for realmente dum sensor node
-        if(!msgDiscoveryReceive->hop){
-          // Radio n está ocupado para send
-          if(!busyRadio){
-            // Enviar msg de resposta ao sensor node
-            msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
-                (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryRspMessage)));
-
-            msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
-            msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
-          
-            dbg("ActiveMessageC", "(Receive) Enviou a mensage de resposta ao discovery do sensor node #%d\n", 
+          // Já passou por aqui
+          if(cacheItem.seqNumb >= msgDiscoveryReceive->seqNumb){
+            alreadyArrive = TRUE;
+            dbg("AMReceiverC", "(Receive) [%d][Routing Node] Msg c/ seqNumb #%d do nodeId #%d já passou por aqui.\n",
+              TOS_NODE_ID,
+              msgDiscoveryReceive->seqNumb,
               msgDiscoveryReceive->sensorNodeId
             );
+          }
+        }               
 
-            if (call AMSend.send(msgRespDiscoverySend->sensorNodeId, &messageRadio, sizeof(SensorNodeDiscoveryRspMessage)) == SUCCESS) {
-              dbg("ActiveMessageC", "(Receive) Sucesso a enviar a msg de resposta ao discovery do sensor node #%d\n", 
+        // Vemos se esta msg já chegou ao root (ou seja é info repetida)
+        if(!alreadyArrive){
+          // escrita no log
+          logFile = fopen("logFile.txt", "ab+");
+          if (logFile == NULL)        {
+            dbg("AMReceiverC", "(Receive) Deu merda!");               
+          }
+
+          dbg("AMReceiverC", "(Receive) vou printar no log '[%d] Node with id #%d connected. Position is (%d, %d)'\n", 
+            call LocalTime.get(), 
+            msgDiscoveryReceive->sensorNodeId, 
+            msgDiscoveryReceive->latitude,
+            msgDiscoveryReceive->longitude
+          );
+
+          fprintf(logFile, "[%d] Node with id #%d connected. Position is (%d, %d)\n",
+            call LocalTime.get(), 
+            msgDiscoveryReceive->sensorNodeId, 
+            msgDiscoveryReceive->latitude,
+            msgDiscoveryReceive->longitude
+          );
+
+          fclose(logFile);
+
+          // só retrasmitimos se for realmente dum sensor node
+          if(!msgDiscoveryReceive->hop){
+            // Radio n está ocupado para send
+            dbg("AMReceiverC", "(Receive) [%d][Root Node] DISCOVERY msg era para mim. Vou enviar resposta. HOP=%d\n",
+              TOS_NODE_ID,
+              msgDiscoveryReceive->hop
+            );
+
+            if(!busyRadio){
+              // Enviar msg de resposta ao sensor node
+              msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
+                  (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryRspMessage)));
+
+              msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
+              msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
+            
+              dbg("ActiveMessageC", "(Receive) Enviou a mensage de resposta ao discovery do sensor node #%d\n", 
                 msgDiscoveryReceive->sensorNodeId
               );
-              busyRadio = TRUE;
+
+              if (call AMSend.send(msgRespDiscoverySend->sensorNodeId, &messageRadio, sizeof(SensorNodeDiscoveryRspMessage)) == SUCCESS) {
+                dbg("ActiveMessageC", "(Receive) Sucesso a enviar a msg de resposta ao discovery do sensor node #%d\n", 
+                  msgDiscoveryReceive->sensorNodeId
+                );
+                busyRadio = TRUE;
+              }
+            }
+            // Radio ocupado. Temos que por na queue
+            else{
+              dbg("ActiveMessageC", "(Receive) Radio esta busy. Põe na queue");
+
+              msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
+                  (call Packet.getPayload(&messageToQueue, sizeof(SensorNodeDiscoveryRspMessage)));
+              msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
+              msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
+
+              structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_RSP_MESSAGE;
+              structSensorFire.messageType.sensorNodeDiscoveryRspMessage = *msgRespDiscoverySend;
+
+              call SendQueue.enqueue(structSensorFire);
             }
           }
-          // Radio ocupado. Temos que por na queue
-          else{
-            dbg("ActiveMessageC", "(Receive) Radio esta busy. Põe na queue");
 
-            msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
-                (call Packet.getPayload(&messageToQueue, sizeof(SensorNodeDiscoveryRspMessage)));
-            msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
-            msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
+          dbg("ActiveMessageC", "(Receive) [%d][Root Node] Pomos informacaos do seq number e node id na CACHE (sensorNodeId : %d) (seq : %d)\n", 
+            TOS_NODE_ID,
+            msgDiscoveryReceive->sensorNodeId,
+            msgDiscoveryReceive->seqNumb
+          );
+          // Por fim vamos actualizar a informação na cache
+          cacheItem.nodeId = msgDiscoveryReceive->sensorNodeId;
+          cacheItem.seqNumb = msgDiscoveryReceive->seqNumb;
 
-            structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_RSP_MESSAGE;
-            structSensorFire.messageType.sensorNodeDiscoveryRspMessage = *msgRespDiscoverySend;
-
-            call SendQueue.enqueue(structSensorFire);
-          }
+          call Cache.insert(cacheItem);
+        }
+        else{
+          dbg("ActiveMessageC", "(Receive) [%d][Root Node] Msg descartada pois seq number da cache maior ou igual que o da msg (sensorNodeId : %d) (seqCache : %d) (seqMsg : %d)\n",
+             TOS_NODE_ID,
+             msgDiscoveryReceive->sensorNodeId,
+             cacheItem.seqNumb,
+             msgDiscoveryReceive->seqNumb
+          );
         }
       }
       // Se for uma mensagem do tipo 'SensorBroadCastMessage' (vêm com as leituras do sensor node)                       
@@ -337,26 +412,74 @@ implementation
           msgBroadCastReceive->sensorNodeId
         );
 
-        logFile = fopen("logFile.txt", "ab+");
-        if (logFile == NULL)        {
-          dbg("AMReceiverC", "(Receive) Deu merda!");               
+        // Temos de verificar se este msg já chegou ao root
+        alreadyArrive = FALSE;
+        cacheIndex = lookup(msgBroadCastReceive->sensorNodeId);
+
+        // Existe informações deste sensor node
+        if(cacheIndex != -1){
+          cacheItem = cache[cacheIndex];
+          dbg("AMReceiverC", "(Receive) [%d][Routing Node] Existe info sobre este nó #%d (seqNumb: %d)\n",
+            TOS_NODE_ID,
+            cacheItem.nodeId,
+            cacheItem.seqNumb
+          );
+
+          // Já passou por aqui
+          if(cacheItem.seqNumb >= msgBroadCastReceive->seqNumb){
+            alreadyArrive = TRUE;
+            dbg("AMReceiverC", "(Receive) [%d][Routing Node] Msg c/ seqNumb #%d do nodeId #%d já passou por aqui.\n",
+              TOS_NODE_ID,
+              msgBroadCastReceive->seqNumb,
+              msgBroadCastReceive->sensorNodeId
+            );
+          }
+        }    
+
+        // Vemos se esta msg já chegou ao root (ou seja é info repetida)
+        if(!alreadyArrive){
+          // escrita no log
+          logFile = fopen("logFile.txt", "ab+");
+          if (logFile == NULL)        {
+            dbg("AMReceiverC", "(Receive) Deu merda!");               
+          }
+
+          dbg("AMReceiverC", "(Receive) vou printar no log '%d] Node with id #%d give temperature #%d and humity #%d'\n", 
+            call LocalTime.get(),
+            (int)msgBroadCastReceive->sensorNodeId, 
+            (int)msgBroadCastReceive->temperature,
+            (int)msgBroadCastReceive->humidity
+          );
+
+          fprintf(logFile, "[%d] Node with id #%d give temperature #%d and humity #%d\n", 
+            call LocalTime.get(),
+            (int)msgBroadCastReceive->sensorNodeId, 
+            (int)msgBroadCastReceive->temperature,
+            (int)msgBroadCastReceive->humidity
+          );
+
+          fclose(logFile);
+
+          dbg("ActiveMessageC", "(Receive) [%d][Root Node] Pomos informacaos do seq number e node id na CACHE (sensorNodeId : %d) (seq : %d)\n", 
+            TOS_NODE_ID,
+            msgBroadCastReceive->sensorNodeId,
+            msgBroadCastReceive->seqNumb
+          );
+
+          // Por fim vamos actualizar a informação na cache
+          cacheItem.nodeId = msgBroadCastReceive->sensorNodeId;
+          cacheItem.seqNumb = msgBroadCastReceive->seqNumb;
+
+          call Cache.insert(cacheItem);
         }
-
-        dbg("AMReceiverC", "(Receive) vou printar no log '%d] Node with id #%d give temperature #%d and humity #%d'\n", 
-          call LocalTime.get(),
-          (int)msgBroadCastReceive->sensorNodeId, 
-          (int)msgBroadCastReceive->temperature,
-          (int)msgBroadCastReceive->humidity
-        );
-
-        fprintf(logFile, "[%d] Node with id #%d give temperature #%d and humity #%d\n", 
-          call LocalTime.get(),
-          (int)msgBroadCastReceive->sensorNodeId, 
-          (int)msgBroadCastReceive->temperature,
-          (int)msgBroadCastReceive->humidity
-        );
-
-        fclose(logFile);
+        else{
+          dbg("ActiveMessageC", "(Receive) [%d][Root Node] Msg descartada pois seq number da cache maior ou igual que o da msg (sensorNodeId : %d) (seqCache : %d) (seqMsg : %d)\n",
+             TOS_NODE_ID,
+             msgBroadCastReceive->sensorNodeId,
+             cacheItem.seqNumb,
+             msgBroadCastReceive->seqNumb
+          );
+        }
       }
       else{
           dbg("AMReceiverC", "(Receive) [%d][Root Node] Não devo entrar aqui\n", TOS_NODE_ID);          
@@ -372,70 +495,122 @@ implementation
       if(len == sizeof(SensorNodeDiscoveryMessage)){         
         
         msgDiscoveryReceive = (SensorNodeDiscoveryMessage*) payload;
-        dbg("AMReceiverC", "(Receive) [%d][Routing Node] Sou um routing node e rescebi discovery msg do nó #%d\n", 
+        dbg("AMReceiverC", "(Receive) [%d][Routing Node] Sou um routing node e rescebi discovery msg do nó #%d com nº seq #%d\n", 
           TOS_NODE_ID,
-          msgDiscoveryReceive->sensorNodeId
-        );               
+          msgDiscoveryReceive->sensorNodeId,
+          msgDiscoveryReceive->seqNumb
+        );
 
-        // Enviar msg de resposta ao sensor node
-        msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
-            (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryRspMessage)));
-        msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
-        msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
-        
-        // Radio esta disponivel? 
-        if(!busyRadio){
-          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Enviou a mensage de resposta ao discovery do sensor node #%d\n", 
-            TOS_NODE_ID, 
-            msgDiscoveryReceive->sensorNodeId
+        // Temos de verificar se msg já não passou por este routing node
+        retransmit = TRUE;
+        cacheIndex = lookup(msgDiscoveryReceive->sensorNodeId);
+        dbg("AMReceiverC", "(Receive) [%d][Routing Node] CacheIndex = #%d\n", 
+          TOS_NODE_ID,
+          cacheIndex
+        );
+
+        // Existe informações deste sensor node
+        if(cacheIndex != -1){
+          cacheItem = cache[cacheIndex];
+          dbg("AMReceiverC", "(Receive) [%d][Routing Node] Existe info sobre este nó #%d (seqNumb: %d)\n",
+            TOS_NODE_ID,
+            cacheItem.nodeId,
+            cacheItem.seqNumb
           );
 
-          if (call AMSend.send(msgRespDiscoverySend->sensorNodeId, &messageRadio, sizeof(SensorNodeDiscoveryRspMessage)) == SUCCESS) {
-            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Sucesso a enviar a msg de resposta ao discovery do sensor node #%d\n",
-             TOS_NODE_ID, 
-             msgDiscoveryReceive->sensorNodeId
+          // Já passou por aqui
+          if(cacheItem.seqNumb >= msgDiscoveryReceive->seqNumb){
+            retransmit = FALSE;
+            dbg("AMReceiverC", "(Receive) [%d][Routing Node] Msg c/ seqNumb #%d do nodeId #%d já passou por aqui.\n",
+              TOS_NODE_ID,
+              msgDiscoveryReceive->seqNumb,
+              msgDiscoveryReceive->sensorNodeId
             );
-            busyRadio = TRUE;
           }
         }
-        // Radio n está disponivel. Tem que por na queue
-        else{
-          
-          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg de resposta ao discovery\n", 
-            TOS_NODE_ID
-          );          
 
-          structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_RSP_MESSAGE;
-          structSensorFire.messageType.sensorNodeDiscoveryRspMessage = *msgRespDiscoverySend;
+        // Vemos se é para retrasmitir
+        if(retransmit){
+          // Enviar msg de resposta ao sensor node
+          msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
+              (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryRspMessage)));
+          msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
+          msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
+          
+          // Radio esta disponivel? 
+          if(!busyRadio){
+            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Enviou a mensage de resposta ao discovery do sensor node #%d\n", 
+              TOS_NODE_ID, 
+              msgDiscoveryReceive->sensorNodeId
+            );
+
+            if (call AMSend.send(msgRespDiscoverySend->sensorNodeId, &messageRadio, sizeof(SensorNodeDiscoveryRspMessage)) == SUCCESS) {
+              dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Sucesso a enviar a msg de resposta ao discovery do sensor node #%d\n",
+               TOS_NODE_ID, 
+               msgDiscoveryReceive->sensorNodeId
+              );
+              busyRadio = TRUE;
+            }
+          }
+          // Radio n está disponivel. Tem que por na queue
+          else{
+            
+            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg de resposta ao discovery\n", 
+              TOS_NODE_ID
+            );          
+
+            structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_RSP_MESSAGE;
+            structSensorFire.messageType.sensorNodeDiscoveryRspMessage = *msgRespDiscoverySend;
+
+            call SendQueue.enqueue(structSensorFire);
+          }
+
+          // msg para retransmitir info inicial do sensor node ao root node
+          dbg("ActiveMessageC", "(Receive) [%d] Radio esta busy. Põe a retrasmissão da msg de discovery\n", 
+            TOS_NODE_ID
+          );
+
+          msgDiscoverySend = (SensorNodeDiscoveryMessage*)
+                (call Packet.getPayload(&messageToQueue, sizeof(SensorNodeDiscoveryMessage)));
+          msgDiscoverySend->seqNumb = msgDiscoveryReceive->seqNumb;    
+          msgDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
+          msgDiscoverySend->latitude = msgDiscoveryReceive->latitude;
+          msgDiscoverySend->longitude = msgDiscoveryReceive->longitude;
+          msgDiscoverySend->hop = (msgDiscoveryReceive->hop + 1);
+
+          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] DISCOVERY msg with fields (sensorNodeId : %d) (latitude : %d) (longitude : %d) (hops : %d) put in queue\n", 
+            TOS_NODE_ID,
+            msgDiscoverySend->sensorNodeId,
+            msgDiscoverySend->latitude,
+            msgDiscoverySend->longitude,
+            msgDiscoverySend->hop
+          );
+
+          structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_MESSAGE;
+          structSensorFire.messageType.sensorNodeDiscoveryMessage = *msgDiscoverySend;
 
           call SendQueue.enqueue(structSensorFire);
+
+          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Pomos informacaos do seq number e node id na CACHE (sensorNodeId : %d) (seq : %d)\n", 
+            TOS_NODE_ID,
+            msgDiscoverySend->sensorNodeId,
+            msgDiscoverySend->seqNumb
+          );
+          // Por fim vamos actualizar a informação na cache
+          cacheItem.nodeId = msgDiscoveryReceive->sensorNodeId;
+          cacheItem.seqNumb = msgDiscoveryReceive->seqNumb;
+
+          call Cache.insert(cacheItem);
         }
-
-        // msg para retransmitir info inicial do sensor node ao root node
-        dbg("ActiveMessageC", "(Receive) [%d] Radio esta busy. Põe a retrasmissão da msg de discovery\n", 
-          TOS_NODE_ID
-        );
-
-        msgDiscoverySend = (SensorNodeDiscoveryMessage*)
-              (call Packet.getPayload(&messageToQueue, sizeof(SensorNodeDiscoveryMessage)));
-
-        msgDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
-        msgDiscoverySend->latitude = msgDiscoveryReceive->latitude;
-        msgDiscoverySend->longitude = msgDiscoveryReceive->longitude;
-        msgDiscoverySend->hop = (msgDiscoveryReceive->hop + 1);
-
-        dbg("ActiveMessageC", "(Receive) [%d][Routing Node] DISCOVERY msg with fields (sensorNodeId : %d) (latitude : %d) (longitude : %d) (hops : %d) put in queue\n", 
-          TOS_NODE_ID,
-          msgDiscoverySend->sensorNodeId,
-          msgDiscoverySend->latitude,
-          msgDiscoverySend->longitude,
-          msgDiscoverySend->hop
-        );
-
-        structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_MESSAGE;
-        structSensorFire.messageType.sensorNodeDiscoveryMessage = *msgDiscoverySend;
-
-        call SendQueue.enqueue(structSensorFire);
+        // Descarta se a msg pois já passou por aqui
+        else{
+          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Msg descartada pois seq number da cache maior ou igual que o da msg (sensorNodeId : %d) (seqCache : %d) (seqMsg : %d)\n",
+             TOS_NODE_ID,
+             msgDiscoveryReceive->sensorNodeId,
+             cacheItem.seqNumb,
+             msgDiscoveryReceive->seqNumb
+          );
+        }
       }      
       // Recebeu uma msg do sensor node do tipo BroadCast
       else if(len == sizeof(SensorBroadCastMessage)){         
@@ -444,43 +619,98 @@ implementation
         dbg("AMReceiverC", "(Receive) [%d][Routing Node] Sou um routing node e recebi BROADCAST msg do nó #%d\n", 
           TOS_NODE_ID, 
           msgBroadCastReceive->sensorNodeId
-        );               
+        );          
 
-        // Enviar msg de resposta ao sensor node        
-        msgBroadCastSend = (SensorBroadCastMessage*)
-            (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
+        // Temos de verificar se msg já não passou por este routing node
+        retransmit = TRUE;
+        cacheIndex = lookup(msgBroadCastReceive->sensorNodeId);
+        dbg("AMReceiverC", "(Receive) [%d][Routing Node] CacheIndex = #%d\n", 
+          TOS_NODE_ID,
+          cacheIndex
+        );
 
-        msgBroadCastSend->sensorNodeId = msgBroadCastReceive->sensorNodeId;
-        msgBroadCastSend->temperature = msgBroadCastReceive->temperature;
-        msgBroadCastSend->humidity = msgBroadCastReceive->humidity;
-        
-        
-        // Radio esta disponivel? 
-        if(!busyRadio){
-          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Retrasmiti a BROADCAST msg vinda do nó #%d\n", 
-            TOS_NODE_ID, 
-            msgBroadCastReceive->sensorNodeId
+        // Existe informações deste sensor node
+        if(cacheIndex != -1){
+          cacheItem = cache[cacheIndex];
+          dbg("AMReceiverC", "(Receive) [%d][Routing Node] Existe info sobre este nó #%d (seqNumb: %d)\n",
+            TOS_NODE_ID,
+            cacheItem.nodeId,
+            cacheItem.seqNumb
           );
 
-          if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorBroadCastMessage)) == SUCCESS) {
-            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Sucesso a  Retrasmiti a BROADCAST msg vinda do nó #%d\n", 
+          // Já passou por aqui
+          if(cacheItem.seqNumb >= msgBroadCastReceive->seqNumb){
+            dbg("AMReceiverC", "(Receive) [%d][Routing Node] Msg c/ seqNumb #%d do nodeId #%d já passou por aqui.\n",
+              TOS_NODE_ID,
+              msgBroadCastReceive->seqNumb,
+              msgBroadCastReceive->sensorNodeId
+            );
+            retransmit = FALSE;
+          }
+        }
+
+
+
+        if(retransmit){     
+
+          // Enviar msg de resposta ao sensor node        
+          msgBroadCastSend = (SensorBroadCastMessage*)
+              (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
+
+          msgBroadCastSend->seqNumb = msgBroadCastReceive->seqNumb;
+          msgBroadCastSend->sensorNodeId = msgBroadCastReceive->sensorNodeId;
+          msgBroadCastSend->temperature = msgBroadCastReceive->temperature;
+          msgBroadCastSend->humidity = msgBroadCastReceive->humidity;
+          
+          
+          // Radio esta disponivel? 
+          if(!busyRadio){
+            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Retrasmiti a BROADCAST msg vinda do nó #%d\n", 
               TOS_NODE_ID, 
               msgBroadCastReceive->sensorNodeId
             );
-            busyRadio = TRUE;
+
+            if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorBroadCastMessage)) == SUCCESS) {
+              dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Sucesso a  Retrasmiti a BROADCAST msg vinda do nó #%d\n", 
+                TOS_NODE_ID, 
+                msgBroadCastReceive->sensorNodeId
+              );
+              busyRadio = TRUE;
+            }
           }
+          // Radio n está disponivel. Tem que por na queue
+          else{
+            
+            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg BROADCAST para retrasmitir\n", 
+              TOS_NODE_ID
+            );          
+
+            structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_MESSAGE;
+            structSensorFire.messageType.sensorBroadCastMessage = *msgBroadCastSend;
+
+            call SendQueue.enqueue(structSensorFire);
+          }
+
+          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Pomos informacaos do seq number e node id na CACHE (sensorNodeId : %d) (seq : %d)\n", 
+            TOS_NODE_ID,
+            msgBroadCastSend->sensorNodeId,
+            msgBroadCastSend->seqNumb
+          );
+
+          // Por fim vamos actualizar a informação na cache
+          cacheItem.nodeId = msgBroadCastReceive->sensorNodeId;
+          cacheItem.seqNumb = msgBroadCastReceive->seqNumb;
+
+          call Cache.insert(cacheItem);
         }
-        // Radio n está disponivel. Tem que por na queue
+        // Descarta se a msg pois já passou por aqui
         else{
-          
-          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg BROADCAST para retrasmitir\n", 
-            TOS_NODE_ID
-          );          
-
-          structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_MESSAGE;
-          structSensorFire.messageType.sensorBroadCastMessage = *msgBroadCastSend;
-
-          call SendQueue.enqueue(structSensorFire);
+          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Msg descartada pois seq number da cache maior ou igual que o da msg (sensorNodeId : %d) (seqCache : %d) (seqMsg : %d)\n",
+             TOS_NODE_ID,
+             msgBroadCastReceive->sensorNodeId,
+             cacheItem.seqNumb,
+             msgBroadCastReceive->seqNumb
+          );
         }        
       }
       else{
@@ -506,7 +736,8 @@ implementation
   }
 
   // TIMER EVENTS (SÓ OS SENSOR NODES É QUE FAZEM ESTE EVENTO)
-  event void Timer.fired() {
+  event void Timer.fired() 
+  {
     dbg("ActiveMessageC", "(Timer.fired) [%d] Timer desparou para o nó\n", TOS_NODE_ID);
     if(!busyRadio){
       // já encontramos o nó de dispatch para este sensor node
@@ -514,6 +745,8 @@ implementation
 
         msgBroadCastSend = (SensorBroadCastMessage*)
           (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
+        msgBroadCastSend->seqNumb = ++seqNumb;
+        msgBroadCastSend->sensorNodeId = TOS_NODE_ID;
         msgBroadCastSend->temperature = 0;
         msgBroadCastSend->humidity = 0;
         
@@ -527,6 +760,8 @@ implementation
         // ainda n encontramos o dispatch node por isso enviamos msg de discovery outra vez
         msgDiscoverySend = (SensorNodeDiscoveryMessage*)
               (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryMessage)));
+
+        msgDiscoverySend->seqNumb = ++seqNumb;
         msgDiscoverySend->sensorNodeId = TOS_NODE_ID;
         msgDiscoverySend->latitude = TOS_NODE_ID;
         msgDiscoverySend->longitude = TOS_NODE_ID;
@@ -546,7 +781,8 @@ implementation
 
 
   // SENSOR EVENTS
-  event void Read.readDone(error_t result, uint16_t data) {
+  event void Read.readDone(error_t result, uint16_t data) 
+  {
     if (result != SUCCESS){
       data = 0xffff;
     }
@@ -554,6 +790,78 @@ implementation
     if (currentTemperature == -1){
       currentTemperature = data;      
     }
+  }
+
+
+  // CACHE FUNCTIONS
+  /* if key is in cache returns the index (offset by first), otherwise returns count */
+  int8_t lookup(uint16_t nodeIdKey) {
+    uint8_t i;
+    CacheItem item;
+    
+    dbg("AMReceiverC", "(lookup) Procuramos nó #%d com o count = %d e first = %d\n",
+      nodeIdKey,
+      count,
+      first
+    );
+    for (i = 0; i < count; i++) {
+      item = cache[(i + first) % CACHE_SIZE];
+      if (item.nodeId == nodeIdKey){
+        return i; 
+      }
+    }
+    dbg("AMReceiverC", "(lookup) Não encontrei. retorno -1\n");
+    return -1;
+  }
+
+  /* remove the entry with index i (relative to first) */
+  void remove(uint8_t i) {
+    uint8_t j;
+    if (i >= count) 
+      return;
+    if (i == 0) {
+      //shift all by moving first
+      first = (first + 1) % CACHE_SIZE;
+    } 
+    else {
+      //shift everyone down
+      for (j = i; j < count; j++) {
+        cache[(j + first) % CACHE_SIZE] = cache[(j + first + 1) % CACHE_SIZE];
+      }
+    }
+    count--;
+  }
+
+  command void Cache.insert(CacheItem _cacheItem) {
+    int8_t _cacheIndex;
+
+    _cacheIndex = lookup(_cacheItem.nodeId);
+    // se ja existir a key na cache
+    if(_cacheIndex != -1){
+      cache[_cacheIndex] = _cacheItem;
+    }
+    // se tiver cheia e n existir
+    else if (count == CACHE_SIZE) {
+      remove(_cacheIndex % count);
+      cache[(first + count) % CACHE_SIZE] = _cacheItem;
+      count++;
+    }
+    // se n tiver cheia e n existir
+    else{
+      cache[(first + count) % CACHE_SIZE] = _cacheItem;
+      count++;
+    }
+  }
+
+  // Se existe ou não
+  command bool Cache.lookup(CacheItem _cacheItem) {
+    return (lookup(_cacheItem.nodeId) < count);
+  }
+
+  // Remove todos os elementos
+  command void Cache.flush() {
+    while(count > 0)
+      remove(0);
   }
 }
 
