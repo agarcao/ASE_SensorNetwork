@@ -8,6 +8,7 @@ typedef nx_struct SensorNodeDiscoveryMessage {
   nx_uint16_t longitude;
   nx_uint16_t hop;
   nx_uint16_t firstTimeDiscovery;
+  nx_uint16_t forSizeOfDontBeTheSame;
 } SensorNodeDiscoveryMessage;
 
 typedef nx_struct SensorNodeDiscoveryRspMessage {
@@ -21,11 +22,18 @@ typedef nx_struct SensorBroadCastMessage {
   nx_uint16_t dispatchNodeId; // Needed to know who must respond with SensorBroadCastRspMessage
   nx_uint16_t temperature;
   nx_uint16_t humidity;
+  nx_uint16_t fire;
 } SensorBroadCastMessage;
 
 typedef nx_struct SensorBroadCastRspMessage {
   nx_uint16_t sensorNodeId;
 } SensorBroadCastRspMessage;
+
+typedef nx_struct sensors_msg {
+  nx_uint16_t fire;
+  nx_uint16_t humidity;
+  nx_uint16_t temperature;
+} sensors_msg;
 
 typedef struct SensorFireMsg {
   short messageTypeId;
@@ -45,6 +53,7 @@ typedef nx_struct CacheItem {
 
 enum {
   AM_RADIO_SENSOR_FIRE_MSG = 6,
+  AM_SENSORS_MSG = 6,
 
   // Intervalo entre envio-o de msg
   DEFAULT_INTERVAL = 256,

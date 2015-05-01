@@ -17,8 +17,6 @@ module SensorFireC
 
     interface Timer<TMilli>;
 
-    interface Read<uint16_t>;
-
     interface Queue<struct SensorFireMsg> as SendQueue;
 
     interface LocalTime<TMilli>;    
@@ -57,8 +55,11 @@ implementation
   // Acks de nós de dispatch p/ garantir que estão a receber a Broadcast
   SensorBroadCastRspMessage *msgBroadCastRspSend, *msgBroadCastRspReceive;
 
+  // Mensagens dos sensores
+  sensors_msg *sensorMsg;
+
   // Apontador para estrutuca SensorFireMsg
-  SensorFireMsg structSensorFire;
+  SensorFireMsg structSensorFire;  
 
   // Numero de sequencia das msg mandadas pelos sensor nodes
   uint32_t seqNumb = 0;
@@ -71,7 +72,8 @@ implementation
   bool alreadyArrive;
   bool firstTimeDiscovery = TRUE;
 
-  uint16_t currentTemperature;
+  uint16_t lastTemperature = 0;
+  uint16_t lastHumity = 0;
   int16_t sensorNodeLongitude;
   int16_t sensorNodeLatitude;
 
@@ -248,6 +250,7 @@ implementation
             msgBroadCastSend->dispatchNodeId = structSensorFire.messageType.sensorBroadCastMessage.dispatchNodeId;
             msgBroadCastSend->temperature = structSensorFire.messageType.sensorBroadCastMessage.temperature;
             msgBroadCastSend->humidity = structSensorFire.messageType.sensorBroadCastMessage.humidity;
+            msgBroadCastSend->fire = structSensorFire.messageType.sensorBroadCastMessage.fire;
 
             if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorBroadCastMessage)) == SUCCESS) {
             }
@@ -290,13 +293,46 @@ implementation
         }        
         else if(!(call SendQueue.empty())){
           // se há mensagens na queue para enviar
-          dbg("AMReceiverC", "(AMSend.sendDone) [%d] Há mais msg para enviar\n", TOS_NODE_ID); 
-          /*messageRadio = call SendQueue.dequeue();
-          msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
-                (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryRspMessage)));
+          dbg("AMReceiverC", "(AMSend.sendDone) [%d][Sensor Node] Há mais msg para enviar\n", TOS_NODE_ID); 
+          structSensorFire = call SendQueue.dequeue();
 
-          if (call AMSend.send(msgRespDiscoverySend->sensorNodeId, &messageRadio, sizeof(SensorNodeDiscoveryRspMessage)) == SUCCESS) {
-          }*/
+          // Se for uma msg do tipo discovery
+          if(structSensorFire.messageTypeId == SENSOR_NODE_DISCOVERY_MESSAGE){
+            dbg("AMReceiverC", "(AMSend.sendDone) [%d][Sensor Node] É uma mensage do tipo DISCOVERY\n", TOS_NODE_ID); 
+            msgDiscoverySend = (SensorNodeDiscoveryMessage*)
+                  (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryMessage)));
+            // construimos a msg
+            msgDiscoverySend->seqNumb = structSensorFire.messageType.sensorNodeDiscoveryMessage.seqNumb;
+            msgDiscoverySend->sensorNodeId = structSensorFire.messageType.sensorNodeDiscoveryMessage.sensorNodeId;
+            msgDiscoverySend->latitude = structSensorFire.messageType.sensorNodeDiscoveryMessage.latitude;
+            msgDiscoverySend->longitude = structSensorFire.messageType.sensorNodeDiscoveryMessage.longitude;
+            msgDiscoverySend->hop = structSensorFire.messageType.sensorNodeDiscoveryMessage.hop;
+            msgDiscoverySend->firstTimeDiscovery = structSensorFire.messageType.sensorNodeDiscoveryMessage.firstTimeDiscovery;
+
+            if (call AMSend.send(dispatchNodeID, &messageRadio, sizeof(SensorNodeDiscoveryMessage)) == SUCCESS) {
+            }
+          }
+          // se for uma msg do tipo broadcast
+          else if(structSensorFire.messageTypeId == SENSOR_NODE_BROADCAST_MESSAGE){
+            dbg("AMReceiverC", "(AMSend.sendDone) [%d][Root Node] É uma mensage do tipo BROADCAST\n", TOS_NODE_ID); 
+            msgBroadCastSend = (SensorBroadCastMessage*)
+                  (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
+
+            // construimos a msg
+            msgBroadCastSend->seqNumb = structSensorFire.messageType.sensorBroadCastMessage.seqNumb;
+            msgBroadCastSend->sensorNodeId = structSensorFire.messageType.sensorBroadCastMessage.sensorNodeId;
+            msgBroadCastSend->dispatchNodeId = structSensorFire.messageType.sensorBroadCastMessage.dispatchNodeId;
+            msgBroadCastSend->temperature = structSensorFire.messageType.sensorBroadCastMessage.temperature;
+            msgBroadCastSend->humidity = structSensorFire.messageType.sensorBroadCastMessage.humidity;
+            msgBroadCastSend->fire = structSensorFire.messageType.sensorBroadCastMessage.fire;
+
+            if (call AMSend.send(dispatchNodeID, &messageRadio, sizeof(SensorBroadCastMessage)) == SUCCESS) {
+            }
+          }
+          // n devia entrar aqui
+          else{
+            dbg("AMReceiverC", "(AMSend.sendDone) [%d][Sensor Node] N devia entrar aqui\n", TOS_NODE_ID); 
+          }    
         }
         else{
           // Se já n há
@@ -372,7 +408,7 @@ implementation
               msgDiscoveryReceive->longitude
             );
 
-            fprintf(logFile, "[%d] Node with id #%d connected. Position is (%d, %d)\n",
+            fprintf(logFile, "[%d] Sensor Node with id #%d connected. Position is (%d, %d)\n",
               call LocalTime.get(), 
               msgDiscoveryReceive->sensorNodeId, 
               msgDiscoveryReceive->latitude,
@@ -493,19 +529,29 @@ implementation
             dbg("AMReceiverC", "(Receive) Deu merda!");               
           }
 
-          dbg("AMReceiverC", "(Receive) vou printar no log '%d] Node with id #%d give temperature #%d and humity #%d'\n", 
-            call LocalTime.get(),
-            (int)msgBroadCastReceive->sensorNodeId, 
-            (int)msgBroadCastReceive->temperature,
-            (int)msgBroadCastReceive->humidity
-          );
+          if(msgBroadCastReceive->fire){
+            fprintf(logFile, "[%d] Sensor Node with id #%d report FIRE! (temperature #%d || humidity #%d)\n", 
+              call LocalTime.get(),
+              (int)msgBroadCastReceive->sensorNodeId,
+              (int)msgBroadCastReceive->temperature,
+              (int)msgBroadCastReceive->humidity
+            );
+          }
+          else{
+            dbg("AMReceiverC", "(Receive) vou printar no log '%d] Node with id #%d give temperature #%d and humity #%d'\n", 
+              call LocalTime.get(),
+              (int)msgBroadCastReceive->sensorNodeId, 
+              (int)msgBroadCastReceive->temperature,
+              (int)msgBroadCastReceive->humidity
+            );
 
-          fprintf(logFile, "[%d] Node with id #%d give temperature #%d and humity #%d\n", 
-            call LocalTime.get(),
-            (int)msgBroadCastReceive->sensorNodeId, 
-            (int)msgBroadCastReceive->temperature,
-            (int)msgBroadCastReceive->humidity
-          );
+            fprintf(logFile, "[%d] Sensor Node with id #%d give temperature #%d and humity #%d\n", 
+              call LocalTime.get(),
+              (int)msgBroadCastReceive->sensorNodeId, 
+              (int)msgBroadCastReceive->temperature,
+              (int)msgBroadCastReceive->humidity
+            );
+          }
 
           fclose(logFile);
 
@@ -840,6 +886,7 @@ implementation
             msgBroadCastSend->dispatchNodeId = msgBroadCastReceive->dispatchNodeId;
             msgBroadCastSend->temperature = msgBroadCastReceive->temperature;
             msgBroadCastSend->humidity = msgBroadCastReceive->humidity;
+            msgBroadCastSend->fire = msgBroadCastReceive->fire;
 
             if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorBroadCastMessage)) == SUCCESS) {                
                 busyRadio = TRUE;
@@ -860,6 +907,7 @@ implementation
             msgBroadCastSend->dispatchNodeId = msgBroadCastReceive->dispatchNodeId;
             msgBroadCastSend->temperature = msgBroadCastReceive->temperature;
             msgBroadCastSend->humidity = msgBroadCastReceive->humidity;
+            msgBroadCastSend->fire = msgBroadCastReceive->fire;
 
             structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_MESSAGE;
             structSensorFire.messageType.sensorBroadCastMessage = *msgBroadCastSend;
@@ -869,8 +917,8 @@ implementation
 
           dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Pomos informacaos do seq number e node id na CACHE (sensorNodeId : %d) (seq : %d)\n", 
             TOS_NODE_ID,
-            msgBroadCastSend->sensorNodeId,
-            msgBroadCastSend->seqNumb
+            msgBroadCastReceive->sensorNodeId,
+            msgBroadCastReceive->seqNumb
           );
 
           // Por fim vamos actualizar a informação na cache
@@ -935,8 +983,85 @@ implementation
           countToDiscoveryAgain = 0;
         }
       }
+      // Recebeu msg dos sensores
+      else if(len == sizeof(sensors_msg)){
+        dbg("AMReceiverC", "(Receive) [%d][Sensor Node] Recebi o msg dos sensores\n", 
+            TOS_NODE_ID
+        );
+
+        sensorMsg = (sensors_msg*) payload;
+
+        //se houve fogo temos que enviar a msg imediatamente para a rede
+        if(sensorMsg->fire){
+          dbg("ActiveMessageC", "(Receive) [%d][Sensor Node] Sensor de fogo está ON\n", 
+            TOS_NODE_ID
+          );
+
+          countToDiscoveryAgain++;
+
+          lastTemperature = sensorMsg->temperature;
+          lastHumity = sensorMsg->humidity;
+
+          // verificamos se radio esta disponivel
+          if(!busyRadio){
+            dbg("ActiveMessageC", "(Receive) [%d][Sensor Node] Radio esta disponivel. Vamos mandar imediatamente um BROADCAST p/ a rede\n", 
+              TOS_NODE_ID
+            );
+
+            msgBroadCastSend = (SensorBroadCastMessage*)
+              (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
+            msgBroadCastSend->seqNumb = ++seqNumb;
+            msgBroadCastSend->sensorNodeId = TOS_NODE_ID;
+            msgBroadCastSend->dispatchNodeId = dispatchNodeID;
+            msgBroadCastSend->temperature = (TOS_NODE_ID*4)%30+10;
+            msgBroadCastSend->humidity = (TOS_NODE_ID*17+7)%100;
+            msgBroadCastSend->fire = 1;
+            
+            
+            if (call AMSend.send(dispatchNodeID, &messageRadio, sizeof(SensorBroadCastMessage)) == SUCCESS) {
+              dbg("ActiveMessageC", "(Receive) Dps do call ser um SUCCESS\n");
+              busyRadio = TRUE;
+            }
+          }
+          // Radio n está disponivel
+          else{
+            dbg("ActiveMessageC", "(Receive) [%d][Sensor Node] Radio n esta disponivel. Metemos BROADCAST na queue de envio\n", 
+              TOS_NODE_ID
+            );
+
+            msgBroadCastSend = (SensorBroadCastMessage*)
+              (call Packet.getPayload(&messageRadioToQueue, sizeof(SensorBroadCastMessage)));
+            msgBroadCastSend->seqNumb = ++seqNumb;
+            msgBroadCastSend->sensorNodeId = TOS_NODE_ID;
+            msgBroadCastSend->dispatchNodeId = dispatchNodeID;
+            msgBroadCastSend->temperature = (TOS_NODE_ID*4)%30+10;
+            msgBroadCastSend->humidity = (TOS_NODE_ID*17+7)%100;
+            msgBroadCastSend->fire = 1;
+
+            structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_MESSAGE;
+            structSensorFire.messageType.sensorBroadCastMessage = *msgBroadCastSend;
+
+            call SendQueue.enqueue(structSensorFire);
+          }
+        }
+        // senao guardamos só a informação de temperatura e humidade
+        else{
+          dbg("ActiveMessageC", "(Receive) [%d][Sensor Node] Sensor de fogo está OFF. Guardamos valores de temperatura (#%d) e humidade (#%d)\n", 
+            TOS_NODE_ID,
+            sensorMsg->temperature,
+            sensorMsg->humidity
+          );
+
+          lastTemperature = sensorMsg->temperature;
+          lastHumity = sensorMsg->humidity;
+        }
+      }
     } 
+    // nenhum dos nós conhecidos
     else {
+      dbg("AMReceiverC", "(Receive) [%d] Tipo de nó unknown\n", 
+            TOS_NODE_ID
+      );
     }
     return bufPtr;
   }
@@ -945,38 +1070,74 @@ implementation
   event void Timer.fired() 
   {
     dbg("ActiveMessageC", "(Timer.fired) [%d] Timer desparou para o nó\n", TOS_NODE_ID);
-    if(!busyRadio){
-      dbg("ActiveMessageC", "(Timer.fired) [%d][Sensor Node] dispatchNodeID=%d e countToDiscoveryAgain=%d\n", 
-        TOS_NODE_ID,
-        dispatchNodeID,
-        countToDiscoveryAgain
-      );
-      // já encontramos o nó de dispatch para este sensor node
-      if(dispatchNodeID != -1 && countToDiscoveryAgain <= MAX_MISSING_ACKS_FROM_BROADCAST){
-        // Incrementamos contador para novo discovery
-        countToDiscoveryAgain++;
+  
+    dbg("ActiveMessageC", "(Timer.fired) [%d][Sensor Node] dispatchNodeID=%d e countToDiscoveryAgain=%d\n", 
+      TOS_NODE_ID,
+      dispatchNodeID,
+      countToDiscoveryAgain
+    );
+    
+    // já encontramos o nó de dispatch para este sensor node
+    if(dispatchNodeID != -1 && countToDiscoveryAgain <= MAX_MISSING_ACKS_FROM_BROADCAST){
+      // Incrementamos contador para novo discovery
+      countToDiscoveryAgain++;
+
+      // verificamos o radio
+      if(!busyRadio){
+        dbg("ActiveMessageC", "(Timer.fired) [%d][Sensor Node] Radio esta disponivel. Vamos mandar imediatamente um BROADCAST p/ a rede (seqNumb: %d, \n", 
+          TOS_NODE_ID
+        );
 
         msgBroadCastSend = (SensorBroadCastMessage*)
           (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
         msgBroadCastSend->seqNumb = ++seqNumb;
         msgBroadCastSend->sensorNodeId = TOS_NODE_ID;
         msgBroadCastSend->dispatchNodeId = dispatchNodeID;
-        msgBroadCastSend->temperature = 0;
-        msgBroadCastSend->humidity = 0;
+        msgBroadCastSend->temperature = (TOS_NODE_ID*4)%30+10;
+        msgBroadCastSend->humidity = (TOS_NODE_ID*17+7)%100;
+        msgBroadCastSend->fire = 0;
         
         dbg("ActiveMessageC", "(Timer.fired) Nó #%d manda 'SensorBroadCastMessage' p/ o seu dispatch node #%d\n", TOS_NODE_ID, dispatchNodeID);
         if (call AMSend.send(dispatchNodeID, &messageRadio, sizeof(SensorBroadCastMessage)) == SUCCESS) {
           dbg("ActiveMessageC", "(Timer.fired) Dps do call ser um SUCCESS\n");
           busyRadio = TRUE;
         }
-      }
+      }      
+      // Radio está busy
       else{
-        // Podemos entrar aqui graças a já termos ultrapassado o n de acks por isso metemos o dispatch node a -1
-        dispatchNodeID = -1;
+        dbg("ActiveMessageC", "(Timer.fired) [%d][Sensor Node] Radio n esta disponivel. Metemos BROADCAST na queue de envio\n", 
+          TOS_NODE_ID
+        );
 
+        msgBroadCastSend = (SensorBroadCastMessage*)
+          (call Packet.getPayload(&messageRadioToQueue, sizeof(SensorBroadCastMessage)));
+        msgBroadCastSend->seqNumb = ++seqNumb;
+        msgBroadCastSend->sensorNodeId = TOS_NODE_ID;
+        msgBroadCastSend->dispatchNodeId = dispatchNodeID;
+        msgBroadCastSend->temperature = (TOS_NODE_ID*4)%30+10;
+        msgBroadCastSend->humidity = (TOS_NODE_ID*17+7)%100;
+        msgBroadCastSend->fire = 0;
+
+        structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_MESSAGE;
+        structSensorFire.messageType.sensorBroadCastMessage = *msgBroadCastSend;
+
+        call SendQueue.enqueue(structSensorFire);
+      }
+    }    
+    // ainda n encontramos o nosso dispatch node  
+    else{
+      // Podemos entrar aqui graças a já termos ultrapassado o n de acks por isso metemos o dispatch node a -1
+      dispatchNodeID = -1;
+
+      // Verificamos o radio
+      if(!busyRadio){
+        dbg("ActiveMessageC", "(Receive) [%d][Sensor Node] Radio esta disponivel. Vamos mandar imediatamente um DISCOVERY p/ a rede\n", 
+          TOS_NODE_ID
+        );
+        
         // ainda n encontramos o dispatch node por isso enviamos msg de discovery outra vez
         msgDiscoverySend = (SensorNodeDiscoveryMessage*)
-              (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryMessage)));
+          (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryMessage)));
 
         msgDiscoverySend->seqNumb = ++seqNumb;
         msgDiscoverySend->sensorNodeId = TOS_NODE_ID;
@@ -984,33 +1145,37 @@ implementation
         msgDiscoverySend->longitude = sensorNodeLongitude;
         msgDiscoverySend->hop = 0;
         msgDiscoverySend->firstTimeDiscovery = firstTimeDiscovery;
-        
+          
         dbg("ActiveMessageC", "(AMControl.startDone) Enviou a mensage de discovery do sensor node #%d\n", TOS_NODE_ID);
         if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorNodeDiscoveryMessage)) == SUCCESS) {
           dbg("ActiveMessageC", "(AMControl.startDone) Sucessor a enviar a msg discovery do sensor node #%d\n", TOS_NODE_ID);
           busyRadio = TRUE;
-        }          
+        }
       }
-    }
-    else{
-      //sensor node n devia aconter
-      dbg("ActiveMessageC", "(Timer.fired) [%d] Channel Busy. Não devia acontecer.\n", TOS_NODE_ID);
+      // Radio ocupado
+      else{
+        dbg("ActiveMessageC", "(Timer.fired) [%d][Sensor Node] Radio n esta disponivel. Metemos DISCOVERY na queue de envio\n", 
+          TOS_NODE_ID
+        );
+        
+        // ainda n encontramos o dispatch node por isso enviamos msg de discovery outra vez
+        msgDiscoverySend = (SensorNodeDiscoveryMessage*)
+          (call Packet.getPayload(&messageRadioToQueue, sizeof(SensorNodeDiscoveryMessage)));
+
+        msgDiscoverySend->seqNumb = ++seqNumb;
+        msgDiscoverySend->sensorNodeId = TOS_NODE_ID;
+        msgDiscoverySend->latitude = sensorNodeLatitude;
+        msgDiscoverySend->longitude = sensorNodeLongitude;
+        msgDiscoverySend->hop = 0;
+        msgDiscoverySend->firstTimeDiscovery = firstTimeDiscovery;
+
+        structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_MESSAGE;
+        structSensorFire.messageType.sensorNodeDiscoveryMessage = *msgDiscoverySend;
+
+        call SendQueue.enqueue(structSensorFire);
+      }          
     }
   }
-
-
-  // SENSOR EVENTS
-  event void Read.readDone(error_t result, uint16_t data) 
-  {
-    if (result != SUCCESS){
-      data = 0xffff;
-    }
-    // Se ainda n foi lido temperatura desde o ultimo envio-o de msg
-    if (currentTemperature == -1){
-      currentTemperature = data;      
-    }
-  }
-
 
   // CACHE FUNCTIONS
   /* if key is in cache returns the index (offset by first), otherwise returns count */

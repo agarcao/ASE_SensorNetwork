@@ -27,9 +27,6 @@ implementation
   components new AMSenderC(AM_RADIO_SENSOR_FIRE_MSG);
   components new AMReceiverC(AM_RADIO_SENSOR_FIRE_MSG); 
 
-  // Sensor
-  components new DemoSensorC() as Sensor;
-
   //Timer
   components new TimerMilliC();
 
@@ -47,8 +44,6 @@ implementation
   SensorFireC.AMControl -> ActiveMessageC;
 
   SensorFireC.Receive -> AMReceiverC;
-
-  SensorFireC.Read -> Sensor;
 
   SensorFireC.Timer -> TimerMilliC;
 
