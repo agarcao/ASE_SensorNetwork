@@ -1084,7 +1084,7 @@ implementation
 
       // verificamos o radio
       if(!busyRadio){
-        dbg("ActiveMessageC", "(Timer.fired) [%d][Sensor Node] Radio esta disponivel. Vamos mandar imediatamente um BROADCAST p/ a rede (seqNumb: %d, \n", 
+        dbg("ActiveMessageC", "(Timer.fired) [%d][Sensor Node] Radio esta disponivel. Vamos mandar imediatamente um BROADCAST p/ a rede, \n", 
           TOS_NODE_ID
         );
 
