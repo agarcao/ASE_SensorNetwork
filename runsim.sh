@@ -1,0 +1,1 @@
+PYTHONPATH=/opt/tinyos-2.1.2/support/sdk/python/ python -i SensorNetworkSimulation.py
