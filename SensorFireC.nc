@@ -41,7 +41,7 @@ implementation
   int dispatchNodeID = -1;
 
   bool busyRadio = FALSE;
-  message_t messageRadio, messageToQueue;
+  message_t messageRadio, messageRadioToQueue, messageRadioToQueue_2;
 
   // Mensagens para os Discovery dos Sensor Nodes
   SensorNodeDiscoveryMessage *msgDiscoverySend, *msgDiscoveryReceive;
@@ -52,15 +52,22 @@ implementation
   // Mensagens c/ as mediçoes dos sensor nodes
   SensorBroadCastMessage *msgBroadCastSend, *msgBroadCastReceive;
 
+  // Acks de nós de dispatch p/ garantir que estão a receber a Broadcast
+  SensorBroadCastRspMessage *msgBroadCastRspSend, *msgBroadCastRspReceive;
+
   // Apontador para estrutuca SensorFireMsg
   SensorFireMsg structSensorFire;
 
   // Numero de sequencia das msg mandadas pelos sensor nodes
   uint32_t seqNumb = 0;
 
+  // Contador para os sensor nodes saberem qdo têm que ir procurar o dispatch node outra vez
+  uint8_t countToDiscoveryAgain = 0;
+
   // Boleano para dizer se routing nodes devem retrasmitir mensagens ou discartar
   bool retransmit;
   bool alreadyArrive;
+  bool firstTimeDiscovery = TRUE;
 
   uint16_t currentTemperature;
 
@@ -154,7 +161,7 @@ implementation
           dbg("AMReceiverC", "(AMSend.sendDone) [%d][Root Node] Há mais msg para enviar\n", TOS_NODE_ID); 
           structSensorFire = call SendQueue.dequeue();
 
-          // Confirmamos que só pode ser uma messagem de discovery response a estar na SendQueue
+          // Se for uma messagem de DISCOVERY RSP a estar na SendQueue
           if(structSensorFire.messageTypeId == SENSOR_NODE_DISCOVERY_RSP_MESSAGE){
 
             msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
@@ -164,6 +171,17 @@ implementation
             msgRespDiscoverySend->dispatchNodeId = structSensorFire.messageType.sensorNodeDiscoveryRspMessage.dispatchNodeId;            
 
             if (call AMSend.send(msgRespDiscoverySend->sensorNodeId, &messageRadio, sizeof(SensorNodeDiscoveryRspMessage)) == SUCCESS) {
+            }
+          }
+          // Se for uma messagem de BROADCAST RSP a estar na SendQueue
+          else if(structSensorFire.messageTypeId == SENSOR_NODE_BROADCAST_RSP_MESSAGE){
+
+            msgBroadCastRspSend = (SensorBroadCastRspMessage*)
+                  (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastRspMessage)));
+
+            msgBroadCastRspSend->sensorNodeId = structSensorFire.messageType.sensorBroadCastRspMessage.sensorNodeId;
+
+            if (call AMSend.send(msgBroadCastRspSend->sensorNodeId, &messageRadio, sizeof(SensorBroadCastRspMessage)) == SUCCESS) {
             }
           }
         }
@@ -219,10 +237,22 @@ implementation
             // construimos a msg
             msgBroadCastSend->seqNumb = structSensorFire.messageType.sensorBroadCastMessage.seqNumb;
             msgBroadCastSend->sensorNodeId = structSensorFire.messageType.sensorBroadCastMessage.sensorNodeId;
+            msgBroadCastSend->dispatchNodeId = structSensorFire.messageType.sensorBroadCastMessage.dispatchNodeId;
             msgBroadCastSend->temperature = structSensorFire.messageType.sensorBroadCastMessage.temperature;
             msgBroadCastSend->humidity = structSensorFire.messageType.sensorBroadCastMessage.humidity;
 
             if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorBroadCastMessage)) == SUCCESS) {
+            }
+          }
+          // se for uma msg do tipo broadcast rsp
+          else if(structSensorFire.messageTypeId == SENSOR_NODE_BROADCAST_RSP_MESSAGE){
+            dbg("AMReceiverC", "(AMSend.sendDone) [%d][Routing Node] É uma mensage do tipo BROADCAST RSP\n", TOS_NODE_ID); 
+            msgBroadCastRspSend = (SensorBroadCastRspMessage*)
+                  (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastRspMessage)));
+            // construimos a msg
+            msgBroadCastRspSend->sensorNodeId = structSensorFire.messageType.sensorBroadCastRspMessage.sensorNodeId;
+
+            if (call AMSend.send(msgBroadCastRspSend->sensorNodeId, &messageRadio, sizeof(SensorBroadCastRspMessage)) == SUCCESS) {
             }
           }
           // n devia entrar aqui
@@ -340,7 +370,7 @@ implementation
 
           fclose(logFile);
 
-          // só retrasmitimos se for realmente dum sensor node
+          // só mandamos resposta se for realmente dum sensor node
           if(!msgDiscoveryReceive->hop){
             // Radio n está ocupado para send
             dbg("AMReceiverC", "(Receive) [%d][Root Node] DISCOVERY msg era para mim. Vou enviar resposta. HOP=%d\n",
@@ -372,7 +402,7 @@ implementation
               dbg("ActiveMessageC", "(Receive) Radio esta busy. Põe na queue");
 
               msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
-                  (call Packet.getPayload(&messageToQueue, sizeof(SensorNodeDiscoveryRspMessage)));
+                  (call Packet.getPayload(&messageRadioToQueue, sizeof(SensorNodeDiscoveryRspMessage)));
               msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
               msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
 
@@ -388,6 +418,7 @@ implementation
             msgDiscoveryReceive->sensorNodeId,
             msgDiscoveryReceive->seqNumb
           );
+
           // Por fim vamos actualizar a informação na cache
           cacheItem.nodeId = msgDiscoveryReceive->sensorNodeId;
           cacheItem.seqNumb = msgDiscoveryReceive->seqNumb;
@@ -460,6 +491,58 @@ implementation
 
           fclose(logFile);
 
+          // If the root are the dispatch node of the sensor node we must send a Ack
+          if(msgBroadCastReceive->dispatchNodeId == TOS_NODE_ID){
+            dbg("AMReceiverC", "(Receive) [%d][Root Node] Sou o dispatch Node do nó #%d. Tenho q mandar Ack do BROADCAST'\n",
+              TOS_NODE_ID,
+              msgBroadCastReceive->sensorNodeId
+            );            
+            
+            if(!busyRadio){
+              dbg("ActiveMessageC", "(Receive) [%d][Root Node] Enviou a mensage de resposta ao BROADCAST do sensor node #%d\n", 
+                TOS_NODE_ID,
+                msgBroadCastRspSend->sensorNodeId
+              );
+
+              // Construção da msg a enviar ao Sensor Node
+              msgBroadCastRspSend = (SensorBroadCastRspMessage*)
+                (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastRspMessage)));
+
+              msgBroadCastRspSend->sensorNodeId = msgBroadCastReceive->sensorNodeId;
+
+              if (call AMSend.send(msgBroadCastRspSend->sensorNodeId, &messageRadio, sizeof(SensorBroadCastRspMessage)) == SUCCESS) {
+                dbg("ActiveMessageC", "(Receive) Sucesso a enviar a msg de resposta ao discovery do sensor node #%d\n", 
+                  msgDiscoveryReceive->sensorNodeId
+                );
+                busyRadio = TRUE;
+              }
+            }
+            // Radio ocupado. Temos que por na queue
+            else{
+              dbg("ActiveMessageC", "(Receive) [%d][Root Node] Radio esta busy. Põe na queue",
+                TOS_NODE_ID
+              );
+
+              // Construção da msg a enviar ao Sensor Node
+              msgBroadCastRspSend = (SensorBroadCastRspMessage*)
+                (call Packet.getPayload(&messageRadioToQueue, sizeof(SensorBroadCastRspMessage)));
+
+              msgBroadCastRspSend->sensorNodeId = msgBroadCastReceive->sensorNodeId;
+
+              structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_RSP_MESSAGE;
+              structSensorFire.messageType.sensorBroadCastRspMessage = *msgBroadCastRspSend;
+
+              call SendQueue.enqueue(structSensorFire);
+            }
+          }
+          // N sou dispatch node do sensor node da msg
+          else{
+            dbg("ActiveMessageC", "(Receive) [%d][Root Node] Não sou dispatch node do sensor node desta msg. É o nó #%d\n",
+              TOS_NODE_ID,
+              msgBroadCastReceive->dispatchNodeId
+            );      
+          }
+
           dbg("ActiveMessageC", "(Receive) [%d][Root Node] Pomos informacaos do seq number e node id na CACHE (sensorNodeId : %d) (seq : %d)\n", 
             TOS_NODE_ID,
             msgBroadCastReceive->sensorNodeId,
@@ -531,18 +614,19 @@ implementation
 
         // Vemos se é para retrasmitir
         if(retransmit){
-          // Enviar msg de resposta ao sensor node
-          msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
-              (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryRspMessage)));
-          msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
-          msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
-          
+
           // Radio esta disponivel? 
           if(!busyRadio){
             dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Enviou a mensage de resposta ao discovery do sensor node #%d\n", 
               TOS_NODE_ID, 
               msgDiscoveryReceive->sensorNodeId
             );
+
+            // Construção da DISCOVERY_RSP a enviar ao Sensor Node
+            msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
+              (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryRspMessage)));
+            msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
+            msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
 
             if (call AMSend.send(msgRespDiscoverySend->sensorNodeId, &messageRadio, sizeof(SensorNodeDiscoveryRspMessage)) == SUCCESS) {
               dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Sucesso a enviar a msg de resposta ao discovery do sensor node #%d\n",
@@ -553,16 +637,30 @@ implementation
             }
           }
           // Radio n está disponivel. Tem que por na queue
-          else{
-            
-            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg de resposta ao discovery\n", 
-              TOS_NODE_ID
-            );          
+          else{            
+            // Só retrasmitimos a msg de discovery se for a 1ª vez
+            if(firstTimeDiscovery){
+              dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg de resposta ao discovery\n", 
+                TOS_NODE_ID
+              );     
+              // Construção da DISCOVERY_RSP a enviar ao Sensor Node
+              msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
+                (call Packet.getPayload(&messageRadioToQueue, sizeof(SensorNodeDiscoveryRspMessage)));
 
-            structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_RSP_MESSAGE;
-            structSensorFire.messageType.sensorNodeDiscoveryRspMessage = *msgRespDiscoverySend;
+              msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
+              msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
 
-            call SendQueue.enqueue(structSensorFire);
+              structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_RSP_MESSAGE;
+              structSensorFire.messageType.sensorNodeDiscoveryRspMessage = *msgRespDiscoverySend;
+
+              call SendQueue.enqueue(structSensorFire);
+            }
+            // n é a primeira vez que há um discovery
+            else{
+              dbg("ActiveMessageC", "(Receive) [%d][Routing Node] N é a 1ª vez que existe um discovery para este nó então n precisamos de retrasmitir até ao root\n", 
+                TOS_NODE_ID
+              );
+            }
           }
 
           // msg para retransmitir info inicial do sensor node ao root node
@@ -571,7 +669,8 @@ implementation
           );
 
           msgDiscoverySend = (SensorNodeDiscoveryMessage*)
-                (call Packet.getPayload(&messageToQueue, sizeof(SensorNodeDiscoveryMessage)));
+                (call Packet.getPayload(&messageRadioToQueue_2, sizeof(SensorNodeDiscoveryMessage)));
+
           msgDiscoverySend->seqNumb = msgDiscoveryReceive->seqNumb;    
           msgDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
           msgDiscoverySend->latitude = msgDiscoveryReceive->latitude;
@@ -586,6 +685,7 @@ implementation
             msgDiscoverySend->hop
           );
 
+          // Mete na SendQueue pois sabemos que radio está busy
           structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_MESSAGE;
           structSensorFire.messageType.sensorNodeDiscoveryMessage = *msgDiscoverySend;
 
@@ -596,6 +696,7 @@ implementation
             msgDiscoverySend->sensorNodeId,
             msgDiscoverySend->seqNumb
           );
+
           // Por fim vamos actualizar a informação na cache
           cacheItem.nodeId = msgDiscoveryReceive->sensorNodeId;
           cacheItem.seqNumb = msgDiscoveryReceive->seqNumb;
@@ -649,47 +750,83 @@ implementation
           }
         }
 
+        if(retransmit){
 
+          // If the root are the dispatch node of the sensor node we must send a Ack
+          if(msgBroadCastReceive->dispatchNodeId == TOS_NODE_ID){
+            dbg("AMReceiverC", "(Receive) [%d][Routing Node] Sou o dispatch Node do nó #%d. Tenho q mandar Ack do BROADCAST\n",
+              TOS_NODE_ID,
+              msgBroadCastReceive->sensorNodeId
+            );
+            
+            // Radio esta disponivel?   
+            if(!busyRadio){
+              dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Enviou a mensage de resposta ao BROADCAST do sensor node #%d\n", 
+                TOS_NODE_ID,
+                msgBroadCastReceive->sensorNodeId
+              );
 
-        if(retransmit){     
+              // Construção da msg a enviar ao Sensor Node
+              msgBroadCastRspSend = (SensorBroadCastRspMessage*)
+                (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastRspMessage)));
 
-          // Enviar msg de resposta ao sensor node        
+              msgBroadCastRspSend->sensorNodeId = msgBroadCastReceive->sensorNodeId;
+
+              if (call AMSend.send(msgBroadCastRspSend->sensorNodeId, &messageRadio, sizeof(SensorBroadCastRspMessage)) == SUCCESS) {
+                dbg("ActiveMessageC", "(Receive) Sucesso a enviar a msg de resposta ao discovery do sensor node #%d\n", 
+                  msgDiscoveryReceive->sensorNodeId
+                );
+                busyRadio = TRUE;
+              }
+            }
+            // Radio ocupado. Temos que por na queue
+            else{
+              dbg("ActiveMessageC", "(Receive) [%d][Root Node] Radio esta busy. Põe na queue",
+                TOS_NODE_ID
+              );
+
+              // Construção da msg a enviar ao Sensor Node
+              msgBroadCastRspSend = (SensorBroadCastRspMessage*)
+                (call Packet.getPayload(&messageRadioToQueue, sizeof(SensorBroadCastRspMessage)));
+
+              msgBroadCastRspSend->sensorNodeId = msgBroadCastReceive->sensorNodeId;
+
+              structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_RSP_MESSAGE;
+              structSensorFire.messageType.sensorBroadCastRspMessage = *msgBroadCastRspSend;
+
+              call SendQueue.enqueue(structSensorFire);
+            }
+          }
+          // N sou dispatch node do sensor node da msg
+          else{
+            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Não sou dispatch node do sensor node desta msg. É o nó #%d\n",
+              TOS_NODE_ID,
+              msgBroadCastReceive->dispatchNodeId
+            );           
+          }               
+          
+          // Radio n está disponivel. Tem que por na queue
+          
+            
+          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg BROADCAST para retrasmitir\n", 
+            TOS_NODE_ID
+          );          
+
+          // Construção da msg retramitir
           msgBroadCastSend = (SensorBroadCastMessage*)
-              (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
+            (call Packet.getPayload(&messageRadioToQueue_2, sizeof(SensorBroadCastMessage)));
 
           msgBroadCastSend->seqNumb = msgBroadCastReceive->seqNumb;
           msgBroadCastSend->sensorNodeId = msgBroadCastReceive->sensorNodeId;
+          msgBroadCastSend->dispatchNodeId = msgBroadCastReceive->dispatchNodeId;
           msgBroadCastSend->temperature = msgBroadCastReceive->temperature;
           msgBroadCastSend->humidity = msgBroadCastReceive->humidity;
+
+          structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_MESSAGE;
+          structSensorFire.messageType.sensorBroadCastMessage = *msgBroadCastSend;
+
+          call SendQueue.enqueue(structSensorFire);
           
-          
-          // Radio esta disponivel? 
-          if(!busyRadio){
-            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Retrasmiti a BROADCAST msg vinda do nó #%d\n", 
-              TOS_NODE_ID, 
-              msgBroadCastReceive->sensorNodeId
-            );
-
-            if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorBroadCastMessage)) == SUCCESS) {
-              dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Sucesso a  Retrasmiti a BROADCAST msg vinda do nó #%d\n", 
-                TOS_NODE_ID, 
-                msgBroadCastReceive->sensorNodeId
-              );
-              busyRadio = TRUE;
-            }
-          }
-          // Radio n está disponivel. Tem que por na queue
-          else{
-            
-            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg BROADCAST para retrasmitir\n", 
-              TOS_NODE_ID
-            );          
-
-            structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_MESSAGE;
-            structSensorFire.messageType.sensorBroadCastMessage = *msgBroadCastSend;
-
-            call SendQueue.enqueue(structSensorFire);
-          }
 
           dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Pomos informacaos do seq number e node id na CACHE (sensorNodeId : %d) (seq : %d)\n", 
             TOS_NODE_ID,
@@ -714,20 +851,50 @@ implementation
         }        
       }
       else{
-        dbg("AMReceiverC", "(Receive) [%d][Routing Node] Não devo entrar aqui\n", TOS_NODE_ID);           
+        dbg("AMReceiverC", "(Receive) [%d][Routing Node] Msg não é nenhuma das conheceidas para um Routing Node\n", TOS_NODE_ID);           
       }
     } 
     // sensor nodes
     else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999){ 
-      if(len == sizeof(SensorNodeDiscoveryRspMessage) && dispatchNodeID == -1){ 
-        // Recebeu uma msg de resposta ao Discovery do sensor node e ainda n tem nó de despacho
+      dbg("AMReceiverC", "(Receive) [%d][Sensor Node] Recebi uma msg!\n", 
+        TOS_NODE_ID
+      );
+      // Recebeu uma msg de resposta ao Discovery do sensor node e ainda n tem nó de despacho                       
+      if(len == sizeof(SensorNodeDiscoveryRspMessage) && dispatchNodeID == -1){         
+
         msgDiscoveryRspReceive = (SensorNodeDiscoveryRspMessage*) payload;
-        dbg("AMReceiverC", "(Receive) I'am the sensor node(%d) and I receive a discovery responde msg from node #%d\n", TOS_NODE_ID, msgDiscoveryRspReceive->dispatchNodeId);                       
+        dbg("AMReceiverC", "(Receive) [%d][Sensor Node] I receive a discovery responde msg from node #%d\n", 
+          TOS_NODE_ID,
+          msgDiscoveryRspReceive->dispatchNodeId
+        );                       
 
         // se for para mim
         dispatchNodeID = (int)msgDiscoveryRspReceive->dispatchNodeId;
 
+        firstTimeDiscovery = FALSE;
+        countToDiscoveryAgain = 0;
+
         // Timer já está a correr e portanto n precisamos de mais nda
+      }
+      // Recebeu uma msg de resposta ao BroadCast
+      else if(len == sizeof(SensorBroadCastRspMessage)){
+        
+        dbg("AMReceiverC", "(Receive) [%d][Sensor Node] Recebi uma SENSOR_NODE_BROADCAST_RSP_MESSAGE\n", 
+          TOS_NODE_ID
+        );
+
+        // Recebeu uma msg de BROADCAST RSP
+        msgBroadCastRspReceive = (SensorBroadCastRspMessage*) payload;        
+        
+        // Verifica que é para mim
+        if(msgBroadCastRspReceive->sensorNodeId == TOS_NODE_ID){
+          dbg("AMReceiverC", "(Receive) [%d][Sensor Node] É para mim. Vou colocar o meu countToDiscoveryAgain a 0\n", 
+            TOS_NODE_ID
+          );
+
+          // Ponho o count para voltar a fazer o pedido de discovery a 0
+          countToDiscoveryAgain = 0;
+        }
       }
     } 
     else {
@@ -740,13 +907,21 @@ implementation
   {
     dbg("ActiveMessageC", "(Timer.fired) [%d] Timer desparou para o nó\n", TOS_NODE_ID);
     if(!busyRadio){
+      dbg("ActiveMessageC", "(Timer.fired) [%d][Sensor Node] dispatchNodeID=%d e countToDiscoveryAgain=%d\n", 
+        TOS_NODE_ID,
+        dispatchNodeID,
+        countToDiscoveryAgain
+      );
       // já encontramos o nó de dispatch para este sensor node
-      if(dispatchNodeID != -1){
+      if(dispatchNodeID != -1 && countToDiscoveryAgain <= MAX_MISSING_ACKS_FROM_BROADCAST){
+        // Incrementamos contador para novo discovery
+        countToDiscoveryAgain++;
 
         msgBroadCastSend = (SensorBroadCastMessage*)
           (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
         msgBroadCastSend->seqNumb = ++seqNumb;
         msgBroadCastSend->sensorNodeId = TOS_NODE_ID;
+        msgBroadCastSend->dispatchNodeId = dispatchNodeID;
         msgBroadCastSend->temperature = 0;
         msgBroadCastSend->humidity = 0;
         
@@ -757,6 +932,9 @@ implementation
         }
       }
       else{
+        // Podemos entrar aqui graças a já termos ultrapassado o n de acks por isso metemos o dispatch node a -1
+        dispatchNodeID = -1;
+
         // ainda n encontramos o dispatch node por isso enviamos msg de discovery outra vez
         msgDiscoverySend = (SensorNodeDiscoveryMessage*)
               (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryMessage)));
