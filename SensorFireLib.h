@@ -21,6 +21,11 @@ typedef nx_struct SensorBroadCastMessage {
   nx_uint16_t humidity;
 } SensorBroadCastMessage;
 
+typedef nx_struct DebugMessage {
+  nx_uint16_t dbgMessCode;
+  nx_uint16_t dbgParam1;
+} DebugMessage;
+
 typedef struct SensorFireMsg {
   short messageTypeId;
   union{
@@ -46,6 +51,11 @@ enum {
   SENSOR_NODE_DISCOVERY_MESSAGE = 1,
   SENSOR_NODE_DISCOVERY_RSP_MESSAGE = 2,
   SENSOR_NODE_BROADCAST_MESSAGE = 3,
+  
+  // Debug Messages
+  DEBUG_MESSAGE = 20,     // Generic message code
+  // The following tell what type of debug message it is.
+  SETSMOKE_DBGMESSAGE       = 21, // Induces smoke near node, or reverts that operation
 
   // CACHE SIZE
   CACHE_SIZE = 10

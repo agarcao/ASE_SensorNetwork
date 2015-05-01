@@ -21,7 +21,7 @@ module SensorFireC
 
     interface Queue<struct SensorFireMsg> as SendQueue;
 
-    interface LocalTime<TMilli>;    
+    interface LocalTime<TMilli>;
   }
   provides
   {
@@ -62,7 +62,9 @@ implementation
   bool retransmit;
   bool alreadyArrive;
 
+  // Seguem-se os stats dos sensores. . .
   uint16_t currentTemperature;
+  //bool CurrentSmoke = FALSE;
 
   FILE *logFile;
 
@@ -110,7 +112,7 @@ implementation
       } else if(TOS_NODE_ID >= 1 && TOS_NODE_ID <= 99){ // routing nodes
       } else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999){ // sensor nodes
         // Ao iniciar o modulo de comunicação, se o dispatch node ainda n for conhecido (=-1) temos de encontrar um
-        if(dispatchNodeID == -1){
+        if(dispatchNodeID == -1) {
           if(!busyRadio){
         
             msgDiscoverySend = (SensorNodeDiscoveryMessage*)
@@ -279,7 +281,7 @@ implementation
     dbg("AMReceiverC", "(Receive) Recebi msg\n");
     
     // server node
-    if(!TOS_NODE_ID){
+    if(!TOS_NODE_ID) {
       dbg("AMReceiverC", "(Receive) Entrei no switch do root node (0)\n");
       
       // Recebeu uma msg do sensor node do tipo Discovery
@@ -718,16 +720,26 @@ implementation
       }
     } 
     // sensor nodes
-    else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999){ 
-      if(len == sizeof(SensorNodeDiscoveryRspMessage) && dispatchNodeID == -1){ 
+    else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999) {
+      if(len == sizeof(SensorNodeDiscoveryRspMessage) && dispatchNodeID == -1) {
         // Recebeu uma msg de resposta ao Discovery do sensor node e ainda n tem nó de despacho
         msgDiscoveryRspReceive = (SensorNodeDiscoveryRspMessage*) payload;
-        dbg("AMReceiverC", "(Receive) I'am the sensor node(%d) and I receive a discovery responde msg from node #%d\n", TOS_NODE_ID, msgDiscoveryRspReceive->dispatchNodeId);                       
+        dbg("AMReceiverC", "(Receive) I'am the sensor node(%d) and I receive a discovery response msg from node #%d\n", TOS_NODE_ID, msgDiscoveryRspReceive->dispatchNodeId);
 
         // se for para mim
         dispatchNodeID = (int)msgDiscoveryRspReceive->dispatchNodeId;
 
         // Timer já está a correr e portanto n precisamos de mais nda
+      }
+      else if(len == sizeof(DebugMessage) && dispatchNodeID == -1) {
+        DebugMessage *dbgMessageReceived = (void*)payload;
+        switch (dbgMessageReceived->dbgMessCode) {
+          case SETSMOKE_DBGMESSAGE:
+            dbg("AMReceiverC", "Call for smoke!.....\n");
+            break;
+          default:
+            dbg("AMReceiverC", "(Receive) Received invalid debug message; code %d\n", dbgMessageReceived->dbgMessCode);
+        }
       }
     } 
     else {

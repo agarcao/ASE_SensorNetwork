@@ -77,9 +77,38 @@ def varval(varname):
   return m(0).getVariable("SensorFireC."+varname).getData()
 
 
-from SensorFireMsg import *
+from DebugMessage import *
 
 def createInjectablePacket():
-  return SensorFireMsg()
-def injectIn(pkt, nodenr):
+  return DebugMessage()
+def injectIn(msg, nodenr):
+  pkt = t.newPacket()
+  pkt.setData(msg.data)
+  pkt.setType(msg.get_amType())
+  pkt.setDestination(nodenr)
   pkt.deliver(nodenr, t.time())
+
+
+
+class dbg_req:
+  """
+  Sinalisa fumo perto do nó "nodenr"...
+  """
+  @staticmethod
+  def fireAt(nodenr):
+    mess = createInjectablePacket()
+    mess.set_dbgMessCode(21)
+    injectIn(mess, nodenr)
+
+
+
+
+#Example: dbg_req.fireAt(110)
+
+
+
+
+
+
+
+
