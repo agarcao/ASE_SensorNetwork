@@ -4,3 +4,6 @@ TOSSIM.py
 simbuild
 logFile.txt
 *.*~
+TOSSIM.pyc
+DebugMessage.pyc
+DebugMessage.py
