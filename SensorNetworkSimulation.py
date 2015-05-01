@@ -86,7 +86,7 @@ def injectIn(msg, nodenr):
   pkt.setData(msg.data)
   pkt.setType(msg.get_amType())
   pkt.setDestination(nodenr)
-  pkt.deliver(nodenr, t.time())
+  pkt.deliverNow(nodenr)
 
 
 

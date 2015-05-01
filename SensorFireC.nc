@@ -731,14 +731,18 @@ implementation
 
         // Timer já está a correr e portanto n precisamos de mais nda
       }
-      else if(len == sizeof(DebugMessage) && dispatchNodeID == -1) {
-        DebugMessage *dbgMessageReceived = (void*)payload;
+      else if(len == sizeof(DebugMessage) && dispatchNodeID == -1)
+      {
+        DebugMessage *dbgMessageReceived;
+        dbg("Injected", "(Injected) TRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR!!!!!!!!!!!!!!?!!!\n");
+        
+        dbgMessageReceived = (void*)payload;
         switch (dbgMessageReceived->dbgMessCode) {
           case SETSMOKE_DBGMESSAGE:
-            dbg("AMReceiverC", "Call for smoke!.....\n");
+            dbg("Injected", "(Injected) Call for smoke!.....\n");
             break;
           default:
-            dbg("AMReceiverC", "(Receive) Received invalid debug message; code %d\n", dbgMessageReceived->dbgMessCode);
+            dbg("Injected", "(Injected) Received invalid debug message; code %d\n", dbgMessageReceived->dbgMessCode);
         }
       }
     } 

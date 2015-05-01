@@ -23,7 +23,7 @@ typedef nx_struct SensorBroadCastMessage {
 
 typedef nx_struct DebugMessage {
   nx_uint16_t dbgMessCode;
-  nx_uint16_t dbgParam1;
+  nx_uint32_t dbgParam1;
 } DebugMessage;
 
 typedef struct SensorFireMsg {
