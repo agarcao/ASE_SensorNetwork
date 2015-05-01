@@ -53,6 +53,7 @@ t.addChannel("AMReceiverC", sys.stdout);
 t.addChannel("Receive", sys.stdout);
 t.addChannel("AMSendC", sys.stdout);
 t.addChannel("ActiveMessageC", sys.stdout);
+t.addChannel("Injected", sys.stdout);
 
 def m(n): return t.getNode(n)
 
