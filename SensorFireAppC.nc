@@ -34,6 +34,8 @@ implementation
   components new TimerMilliC();
 
   components new QueueC(struct SensorFireMsg, 20) as Queue;
+
+  components RandomC;
   
 
   SensorFireC.Boot -> MainC.Boot;
@@ -52,6 +54,8 @@ implementation
 
   SensorFireC.SendQueue -> Queue;
 
-  SensorFireC.LocalTime -> LocalTimeMilliC;;
+  SensorFireC.LocalTime -> LocalTimeMilliC;
+
+  SensorFireC.Random -> RandomC;
 }
 

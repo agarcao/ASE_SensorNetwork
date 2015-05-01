@@ -22,6 +22,8 @@ module SensorFireC
     interface Queue<struct SensorFireMsg> as SendQueue;
 
     interface LocalTime<TMilli>;    
+
+    interface Random;
   }
   provides
   {
@@ -70,6 +72,8 @@ implementation
   bool firstTimeDiscovery = TRUE;
 
   uint16_t currentTemperature;
+  int16_t sensorNodeLongitude;
+  int16_t sensorNodeLatitude;
 
   FILE *logFile;
 
@@ -89,7 +93,9 @@ implementation
     } else if(TOS_NODE_ID >= 1 && TOS_NODE_ID <= 99){ // routing nodes
       dbg("Boot", "(Boot) I'am a routing node - %d\n", TOS_NODE_ID);
     } else if(TOS_NODE_ID >= 100 && TOS_NODE_ID <= 999){ // sensor nodes
-      dbg("Boot", "(Boot) I'am a sensor node - %d\n", TOS_NODE_ID);      
+      dbg("Boot", "(Boot) I'am a sensor node - %d\n", TOS_NODE_ID);     
+      sensorNodeLongitude =  call Random.rand16() % 180;
+      sensorNodeLatitude =  call Random.rand16() % 90;
       // 1º - Tenho que fazer o flooding para ver que routing nodes respondem
       // 2º - Caso receba ACK de mais que um -> escolher 1 e definir como meu routing node
       // 3º - Enviar msg para meu routing node c/ as minha infos(gps coords) q entregará ao server
@@ -124,8 +130,8 @@ implementation
               (call Packet.getPayload(&messageRadio, sizeof(SensorNodeDiscoveryMessage)));
             msgDiscoverySend->seqNumb = ++seqNumb;
             msgDiscoverySend->sensorNodeId = TOS_NODE_ID;
-            msgDiscoverySend->latitude = TOS_NODE_ID;
-            msgDiscoverySend->longitude = TOS_NODE_ID;
+            msgDiscoverySend->latitude = sensorNodeLatitude;
+            msgDiscoverySend->longitude = sensorNodeLongitude;
             msgDiscoverySend->hop = 0;
             msgDiscoverySend->firstTimeDiscovery = firstTimeDiscovery;
         
@@ -513,7 +519,7 @@ implementation
             if(!busyRadio){
               dbg("ActiveMessageC", "(Receive) [%d][Root Node] Enviou a mensage de resposta ao BROADCAST do sensor node #%d\n", 
                 TOS_NODE_ID,
-                msgBroadCastRspSend->sensorNodeId
+                msgBroadCastReceive->sensorNodeId
               );
 
               // Construção da msg a enviar ao Sensor Node
@@ -822,28 +828,44 @@ implementation
             );           
           }               
           
+          // Temos que verificar outra vez pois a msg de cima pode n ter sido enviada          
+          // Radio esta disponivel?   
+          if(!busyRadio){
+            // Construção da msg retramitir
+            msgBroadCastSend = (SensorBroadCastMessage*)
+              (call Packet.getPayload(&messageRadio, sizeof(SensorBroadCastMessage)));
+
+            msgBroadCastSend->seqNumb = msgBroadCastReceive->seqNumb;
+            msgBroadCastSend->sensorNodeId = msgBroadCastReceive->sensorNodeId;
+            msgBroadCastSend->dispatchNodeId = msgBroadCastReceive->dispatchNodeId;
+            msgBroadCastSend->temperature = msgBroadCastReceive->temperature;
+            msgBroadCastSend->humidity = msgBroadCastReceive->humidity;
+
+            if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorBroadCastMessage)) == SUCCESS) {                
+                busyRadio = TRUE;
+            }
+          }
           // Radio n está disponivel. Tem que por na queue
-          
-            
-          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg BROADCAST para retrasmitir\n", 
-            TOS_NODE_ID
-          );          
+          else{
+            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg BROADCAST para retrasmitir\n", 
+              TOS_NODE_ID
+            );          
 
-          // Construção da msg retramitir
-          msgBroadCastSend = (SensorBroadCastMessage*)
-            (call Packet.getPayload(&messageRadioToQueue_2, sizeof(SensorBroadCastMessage)));
+            // Construção da msg retramitir
+            msgBroadCastSend = (SensorBroadCastMessage*)
+              (call Packet.getPayload(&messageRadioToQueue_2, sizeof(SensorBroadCastMessage)));
 
-          msgBroadCastSend->seqNumb = msgBroadCastReceive->seqNumb;
-          msgBroadCastSend->sensorNodeId = msgBroadCastReceive->sensorNodeId;
-          msgBroadCastSend->dispatchNodeId = msgBroadCastReceive->dispatchNodeId;
-          msgBroadCastSend->temperature = msgBroadCastReceive->temperature;
-          msgBroadCastSend->humidity = msgBroadCastReceive->humidity;
+            msgBroadCastSend->seqNumb = msgBroadCastReceive->seqNumb;
+            msgBroadCastSend->sensorNodeId = msgBroadCastReceive->sensorNodeId;
+            msgBroadCastSend->dispatchNodeId = msgBroadCastReceive->dispatchNodeId;
+            msgBroadCastSend->temperature = msgBroadCastReceive->temperature;
+            msgBroadCastSend->humidity = msgBroadCastReceive->humidity;
 
-          structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_MESSAGE;
-          structSensorFire.messageType.sensorBroadCastMessage = *msgBroadCastSend;
+            structSensorFire.messageTypeId = SENSOR_NODE_BROADCAST_MESSAGE;
+            structSensorFire.messageType.sensorBroadCastMessage = *msgBroadCastSend;
 
-          call SendQueue.enqueue(structSensorFire);
-          
+            call SendQueue.enqueue(structSensorFire);
+          }
 
           dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Pomos informacaos do seq number e node id na CACHE (sensorNodeId : %d) (seq : %d)\n", 
             TOS_NODE_ID,
@@ -958,8 +980,8 @@ implementation
 
         msgDiscoverySend->seqNumb = ++seqNumb;
         msgDiscoverySend->sensorNodeId = TOS_NODE_ID;
-        msgDiscoverySend->latitude = TOS_NODE_ID;
-        msgDiscoverySend->longitude = TOS_NODE_ID;
+        msgDiscoverySend->latitude = sensorNodeLatitude;
+        msgDiscoverySend->longitude = sensorNodeLongitude;
         msgDiscoverySend->hop = 0;
         msgDiscoverySend->firstTimeDiscovery = firstTimeDiscovery;
         
