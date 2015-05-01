@@ -99,11 +99,12 @@ while True:
       if node in range(1, 99):
         print("[Routing Node] ID #"), node;
     
-    nodeId = sys.stdin.read(1);
-    userinput = sys.stdin.readline();
+    nodeIdString = sys.stdin.readline();
+    nodeId = int(nodeIdString);
 
     if nodeId in range(1, 99) and nodeId in nodes:
-      t.getNode(nodeId).turnOff();  
+      t.getNode(nodeId).turnOff();
+      print("Malfunction in node #"), nodeId;  
     else:
       print("Node do not exist in this simulation or is not a Routing node");      
   elif c == 'F':
@@ -112,8 +113,8 @@ while True:
       if node in range(100, 999):
         print("[Sensor Node] ID #"), node;
 
-    nodeId = sys.stdin.read(1);
-    userinput = sys.stdin.readline();
+    nodeIdString = sys.stdin.readline();
+    nodeId = int(nodeIdString);
 
     if nodeId in range(100, 999) and nodeId in nodes:
       msg = SensorsMsg();
@@ -124,7 +125,8 @@ while True:
       pkt.setData(msg.data)
       pkt.setType(msg.get_amType());
       pkt.setDestination(nodeId);
-      pkt.deliver(nodeId, t.time() + 3)
+      pkt.deliver(nodeId, t.time() + 3);
+      print("Fire Alert send to node #"), nodeId;
     else:
       print("Node do not exist in this simulation or is not a Sensor node");    
   elif c == 'G':
