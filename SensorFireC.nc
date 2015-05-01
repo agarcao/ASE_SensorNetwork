@@ -127,6 +127,7 @@ implementation
             msgDiscoverySend->latitude = TOS_NODE_ID;
             msgDiscoverySend->longitude = TOS_NODE_ID;
             msgDiscoverySend->hop = 0;
+            msgDiscoverySend->firstTimeDiscovery = firstTimeDiscovery;
         
             dbg("ActiveMessageC", "(AMControl.startDone) Enviou a mensage de discovery do sensor node #%d\n", TOS_NODE_ID);
             if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorNodeDiscoveryMessage)) == SUCCESS) {
@@ -213,6 +214,7 @@ implementation
             msgDiscoverySend->latitude = structSensorFire.messageType.sensorNodeDiscoveryMessage.latitude;
             msgDiscoverySend->longitude = structSensorFire.messageType.sensorNodeDiscoveryMessage.longitude;
             msgDiscoverySend->hop = structSensorFire.messageType.sensorNodeDiscoveryMessage.hop;
+            msgDiscoverySend->firstTimeDiscovery = structSensorFire.messageType.sensorNodeDiscoveryMessage.firstTimeDiscovery;
 
             if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorNodeDiscoveryMessage)) == SUCCESS) {
             }
@@ -348,27 +350,37 @@ implementation
 
         // Vemos se esta msg já chegou ao root (ou seja é info repetida)
         if(!alreadyArrive){
-          // escrita no log
-          logFile = fopen("logFile.txt", "ab+");
-          if (logFile == NULL)        {
-            dbg("AMReceiverC", "(Receive) Deu merda!");               
+
+          //só escreve no log se for a primeira vez que faz um discovery
+          if(msgDiscoveryReceive->firstTimeDiscovery){
+            // escrita no log
+            logFile = fopen("logFile.txt", "ab+");
+            if (logFile == NULL)        {
+              dbg("AMReceiverC", "(Receive) Deu merda!");               
+            }
+
+            dbg("AMReceiverC", "(Receive) vou printar no log '[%d] Node with id #%d connected. Position is (%d, %d)'\n", 
+              call LocalTime.get(), 
+              msgDiscoveryReceive->sensorNodeId, 
+              msgDiscoveryReceive->latitude,
+              msgDiscoveryReceive->longitude
+            );
+
+            fprintf(logFile, "[%d] Node with id #%d connected. Position is (%d, %d)\n",
+              call LocalTime.get(), 
+              msgDiscoveryReceive->sensorNodeId, 
+              msgDiscoveryReceive->latitude,
+              msgDiscoveryReceive->longitude
+            );
+
+            fclose(logFile);
           }
-
-          dbg("AMReceiverC", "(Receive) vou printar no log '[%d] Node with id #%d connected. Position is (%d, %d)'\n", 
-            call LocalTime.get(), 
-            msgDiscoveryReceive->sensorNodeId, 
-            msgDiscoveryReceive->latitude,
-            msgDiscoveryReceive->longitude
-          );
-
-          fprintf(logFile, "[%d] Node with id #%d connected. Position is (%d, %d)\n",
-            call LocalTime.get(), 
-            msgDiscoveryReceive->sensorNodeId, 
-            msgDiscoveryReceive->latitude,
-            msgDiscoveryReceive->longitude
-          );
-
-          fclose(logFile);
+          // se n for
+          else{
+            dbg("AMReceiverC", "(Receive) Este nó já fez um discovery #%d\n", 
+              msgDiscoveryReceive->sensorNodeId
+            );
+          }
 
           // só mandamos resposta se for realmente dum sensor node
           if(!msgDiscoveryReceive->hop){
@@ -638,63 +650,68 @@ implementation
           }
           // Radio n está disponivel. Tem que por na queue
           else{            
-            // Só retrasmitimos a msg de discovery se for a 1ª vez
-            if(firstTimeDiscovery){
-              dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg de resposta ao discovery\n", 
-                TOS_NODE_ID
-              );     
-              // Construção da DISCOVERY_RSP a enviar ao Sensor Node
-              msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
-                (call Packet.getPayload(&messageRadioToQueue, sizeof(SensorNodeDiscoveryRspMessage)));
+            
+            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Radio esta busy. Põe na queue a msg de resposta ao discovery\n", 
+              TOS_NODE_ID
+            );     
+            
+            // Construção da DISCOVERY_RSP a enviar ao Sensor Node
+            msgRespDiscoverySend = (SensorNodeDiscoveryRspMessage*)
+              (call Packet.getPayload(&messageRadioToQueue, sizeof(SensorNodeDiscoveryRspMessage)));
 
-              msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
-              msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
+            msgRespDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
+            msgRespDiscoverySend->dispatchNodeId = TOS_NODE_ID;
 
-              structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_RSP_MESSAGE;
-              structSensorFire.messageType.sensorNodeDiscoveryRspMessage = *msgRespDiscoverySend;
+            structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_RSP_MESSAGE;
+            structSensorFire.messageType.sensorNodeDiscoveryRspMessage = *msgRespDiscoverySend;
 
-              call SendQueue.enqueue(structSensorFire);
-            }
-            // n é a primeira vez que há um discovery
-            else{
-              dbg("ActiveMessageC", "(Receive) [%d][Routing Node] N é a 1ª vez que existe um discovery para este nó então n precisamos de retrasmitir até ao root\n", 
-                TOS_NODE_ID
-              );
-            }
+            call SendQueue.enqueue(structSensorFire);
           }
 
-          // msg para retransmitir info inicial do sensor node ao root node
-          dbg("ActiveMessageC", "(Receive) [%d] Radio esta busy. Põe a retrasmissão da msg de discovery\n", 
-            TOS_NODE_ID
-          );
+          // Só retrasmitimos a msg de discovery se for a 1ª vez
+          if(msgDiscoveryReceive->firstTimeDiscovery){
+            // msg para retransmitir info inicial do sensor node ao root node
+            dbg("ActiveMessageC", "(Receive) [%d] Radio esta busy. Põe a retrasmissão da msg de discovery\n", 
+              TOS_NODE_ID
+            );
 
-          msgDiscoverySend = (SensorNodeDiscoveryMessage*)
-                (call Packet.getPayload(&messageRadioToQueue_2, sizeof(SensorNodeDiscoveryMessage)));
+            msgDiscoverySend = (SensorNodeDiscoveryMessage*)
+                  (call Packet.getPayload(&messageRadioToQueue_2, sizeof(SensorNodeDiscoveryMessage)));
 
-          msgDiscoverySend->seqNumb = msgDiscoveryReceive->seqNumb;    
-          msgDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
-          msgDiscoverySend->latitude = msgDiscoveryReceive->latitude;
-          msgDiscoverySend->longitude = msgDiscoveryReceive->longitude;
-          msgDiscoverySend->hop = (msgDiscoveryReceive->hop + 1);
+            msgDiscoverySend->seqNumb = msgDiscoveryReceive->seqNumb;    
+            msgDiscoverySend->sensorNodeId = msgDiscoveryReceive->sensorNodeId;
+            msgDiscoverySend->latitude = msgDiscoveryReceive->latitude;
+            msgDiscoverySend->longitude = msgDiscoveryReceive->longitude;
+            msgDiscoverySend->hop = (msgDiscoveryReceive->hop + 1);
+            msgDiscoverySend->firstTimeDiscovery = msgDiscoveryReceive->firstTimeDiscovery;
 
-          dbg("ActiveMessageC", "(Receive) [%d][Routing Node] DISCOVERY msg with fields (sensorNodeId : %d) (latitude : %d) (longitude : %d) (hops : %d) put in queue\n", 
-            TOS_NODE_ID,
-            msgDiscoverySend->sensorNodeId,
-            msgDiscoverySend->latitude,
-            msgDiscoverySend->longitude,
-            msgDiscoverySend->hop
-          );
+            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] DISCOVERY msg with fields (sensorNodeId : %d) (latitude : %d) (longitude : %d) (hops : %d) (firstTimeDiscovery : %d) put in queue\n", 
+              TOS_NODE_ID,
+              msgDiscoverySend->sensorNodeId,
+              msgDiscoverySend->latitude,
+              msgDiscoverySend->longitude,
+              msgDiscoverySend->hop,
+              msgDiscoverySend->firstTimeDiscovery
+            );
 
-          // Mete na SendQueue pois sabemos que radio está busy
-          structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_MESSAGE;
-          structSensorFire.messageType.sensorNodeDiscoveryMessage = *msgDiscoverySend;
+            // Mete na SendQueue pois sabemos que radio está busy
+            structSensorFire.messageTypeId = SENSOR_NODE_DISCOVERY_MESSAGE;
+            structSensorFire.messageType.sensorNodeDiscoveryMessage = *msgDiscoverySend;
 
-          call SendQueue.enqueue(structSensorFire);
+            call SendQueue.enqueue(structSensorFire);
+          }
+          // Já n é a primeira vez que existe o discovery deste nó. n precisamos de retrasmitir  
+          else {
+            dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Já n é a 1º vez do discovery deste sensor node #%d\n", 
+              TOS_NODE_ID,
+              msgDiscoveryReceive->sensorNodeId
+            );
+          }
 
           dbg("ActiveMessageC", "(Receive) [%d][Routing Node] Pomos informacaos do seq number e node id na CACHE (sensorNodeId : %d) (seq : %d)\n", 
             TOS_NODE_ID,
-            msgDiscoverySend->sensorNodeId,
-            msgDiscoverySend->seqNumb
+            msgDiscoveryReceive->sensorNodeId,
+            msgDiscoveryReceive->seqNumb
           );
 
           // Por fim vamos actualizar a informação na cache
@@ -943,6 +960,8 @@ implementation
         msgDiscoverySend->sensorNodeId = TOS_NODE_ID;
         msgDiscoverySend->latitude = TOS_NODE_ID;
         msgDiscoverySend->longitude = TOS_NODE_ID;
+        msgDiscoverySend->hop = 0;
+        msgDiscoverySend->firstTimeDiscovery = firstTimeDiscovery;
         
         dbg("ActiveMessageC", "(AMControl.startDone) Enviou a mensage de discovery do sensor node #%d\n", TOS_NODE_ID);
         if (call AMSend.send(AM_BROADCAST_ADDR, &messageRadio, sizeof(SensorNodeDiscoveryMessage)) == SUCCESS) {

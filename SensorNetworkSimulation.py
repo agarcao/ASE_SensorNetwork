@@ -34,13 +34,11 @@ for line in lines:
     t.getNode(20).addNoiseTraceReading(val)
     t.getNode(40).addNoiseTraceReading(val)
     t.getNode(100).addNoiseTraceReading(val)
-    t.getNode(110).addNoiseTraceReading(val)
 
 t.getNode(0).createNoiseModel()
 t.getNode(20).createNoiseModel()
 t.getNode(40).createNoiseModel()
 t.getNode(100).createNoiseModel()
-t.getNode(110).createNoiseModel()
 
 t.addChannel("Boot", sys.stdout);
 t.addChannel("AMReceiverC", sys.stdout);
@@ -51,9 +49,7 @@ m1 = t.getNode(0);
 m2 = t.getNode(100);
 m3 = t.getNode(20);
 m4 = t.getNode(40);
-m5 = t.getNode(110);
 m1.bootAtTime(0);
 m2.bootAtTime(10);
 m3.bootAtTime(15);
 m4.bootAtTime(20);
-m5.bootAtTime(25);

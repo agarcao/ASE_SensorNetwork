@@ -7,7 +7,7 @@ typedef nx_struct SensorNodeDiscoveryMessage {
   nx_uint16_t latitude;
   nx_uint16_t longitude;
   nx_uint16_t hop;
-  nx_uint16_t justToSizeBeDiferent;
+  nx_uint16_t firstTimeDiscovery;
 } SensorNodeDiscoveryMessage;
 
 typedef nx_struct SensorNodeDiscoveryRspMessage {
